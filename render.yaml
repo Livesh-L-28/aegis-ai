@@ -4,7 +4,7 @@ services:
   # ==============================================================================
   - type: web
     name: aegis-ai-api
-    env: docker
+    runtime: docker
     dockerfilePath: infrastructure/docker/Dockerfile
     dockerContext: .
     plan: free
@@ -48,9 +48,8 @@ services:
   # ==============================================================================
   # 2. AEGIS AI Frontend Command Center (React / Vite Static Site)
   # ==============================================================================
-  - type: web
+  - type: static
     name: aegis-ai-web
-    env: static
     rootDir: apps/web
     buildCommand: npm install && npm run build
     staticPublishPath: dist
@@ -63,7 +62,7 @@ services:
         sync: false
 
 # ==============================================================================
-# Managed PostgreSQL with pgvector on Render
+# Managed PostgreSQL on Render
 # ==============================================================================
 databases:
   - name: aegis-postgres
