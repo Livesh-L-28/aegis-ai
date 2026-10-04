@@ -1,0 +1,40 @@
+INCIDENT DETAILS:
+Title: {incident_title}
+Service: {service_name}
+Severity: {severity}
+Detected At: {detected_at}
+Description: {description}
+
+---
+TIMELINE OF EVENTS:
+{timeline_summary}
+
+---
+TOP RANKED EVIDENCE:
+{evidence_summary}
+
+---
+CANDIDATE HYPOTHESES:
+{hypotheses_summary}
+
+---
+SYSTEM TOPOLOGY & PROPAGATION:
+{topology_summary}
+
+---
+TASK:
+Analyze the bounded evidence above. Return a structured JSON response matching the following schema:
+{{
+  "summary": "Concise summary of the incident impact and propagation",
+  "root_cause": "Specific verified root cause or UNKNOWN",
+  "confidence": 0.0 - 1.0,
+  "affected_services": ["service1", "service2"],
+  "supporting_evidence_ids": ["evidence_uuid_1", "evidence_uuid_2"],
+  "contradicting_evidence_ids": [],
+  "reasoning_steps": [
+    {{"type": "OBSERVED FACT", "statement": "...", "evidence_id": "uuid"}},
+    {{"type": "INFERRED RELATIONSHIP", "statement": "...", "evidence_id": "uuid"}},
+    {{"type": "CONCLUSION", "statement": "...", "evidence_id": "uuid"}},
+    {{"type": "UNCERTAINTY", "statement": "...", "evidence_id": null}}
+  ]
+}}

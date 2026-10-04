@@ -1,0 +1,48 @@
+# Byte-compiled / optimized files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# Environment files
+.env
+.env.local
+*.env
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# Type checking & Linters
+.mypy_cache/
+.ruff_cache/
+
+# IDE & Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Docker / local data
+data/
+minio-data/
+postgres-data/
+redis-data/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Frontend build & packages
+node_modules/
+dist/
+dist-ssr/
+
+# Backups & scratch
+backups/

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AEGIS AI — Autonomous Enterprise Reliability Platform</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+      window.addEventListener('error', function(e) {
+        var errDiv = document.getElementById('aegis-runtime-error');
+        if (!errDiv) {
+          errDiv = document.createElement('div');
+          errDiv.id = 'aegis-runtime-error';
+          errDiv.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#dc2626;color:white;padding:16px;z-index:999999;font-family:monospace;font-size:13px;white-space:pre-wrap;border-bottom:2px solid white;';
+          document.body.appendChild(errDiv);
+        }
+        errDiv.textContent = 'AEGIS Frontend Runtime Error:\n' + (e.message || e.error) + '\n' + (e.filename || '') + ':' + (e.lineno || '');
+      });
+      window.addEventListener('unhandledrejection', function(e) {
+        console.error('Unhandled rejection:', e.reason);
+      });
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

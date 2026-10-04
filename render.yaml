@@ -1,0 +1,72 @@
+services:
+  # ==============================================================================
+  # 1. AEGIS AI Backend API (FastAPI)
+  # ==============================================================================
+  - type: web
+    name: aegis-ai-api
+    env: docker
+    dockerfilePath: infrastructure/docker/Dockerfile
+    dockerContext: .
+    plan: free
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: APP_NAME
+        value: "AEGIS AI"
+      - key: APP_VERSION
+        value: "0.1.0"
+      - key: LOG_LEVEL
+        value: INFO
+      - key: DEBUG
+        value: "false"
+      - key: DEV_AUTH_ENABLED
+        value: "true"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: aegis-postgres
+          property: connectionString
+      - key: REDIS_URL
+        sync: false
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
+      - key: ALLOWED_HOSTS
+        value: "*"
+      - key: OBJECT_STORAGE_ENDPOINT
+        value: "https://mock-storage.internal"
+      - key: OBJECT_STORAGE_BUCKET
+        value: "aegis-data"
+      - key: OBJECT_STORAGE_ACCESS_KEY
+        value: "render"
+      - key: OBJECT_STORAGE_SECRET_KEY
+        value: "rendersecret"
+      - key: OBJECT_STORAGE_REGION
+        value: "us-east-1"
+      - key: OBJECT_STORAGE_SECURE
+        value: "false"
+
+  # ==============================================================================
+  # 2. AEGIS AI Frontend Command Center (React / Vite Static Site)
+  # ==============================================================================
+  - type: web
+    name: aegis-ai-web
+    env: static
+    rootDir: apps/web
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_API_BASE_URL
+        sync: false
+
+# ==============================================================================
+# Managed PostgreSQL with pgvector on Render
+# ==============================================================================
+databases:
+  - name: aegis-postgres
+    databaseName: aegis
+    user: postgres
+    plan: free
