@@ -17,6 +17,8 @@ from apps.api.app.models.entities import (
     Remediation,
     RemediationApprovalRecord,
     RemediationExecutionRecord,
+    ReviewFindingEntity,
+    ReviewSessionEntity,
     Service,
     Team,
     User,
@@ -41,8 +43,9 @@ __all__ = [
     "Remediation",
     "RemediationApprovalRecord",
     "RemediationExecutionRecord",
+    "ReviewFindingEntity",
+    "ReviewSessionEntity",
     "Service",
     "Team",
     "User",
 ]
-

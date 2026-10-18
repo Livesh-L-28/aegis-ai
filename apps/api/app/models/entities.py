@@ -534,3 +534,74 @@ class IncidentLearningEntity(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
 
 
+
+
+class ReviewSessionEntity(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    __tablename__ = "review_sessions"
+
+    organization_id: Mapped[UUID] = mapped_column(
+        GUID,
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    project_id: Mapped[UUID | None] = mapped_column(
+        GUID,
+        ForeignKey("projects.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    repository_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    review_type: Mapped[str] = mapped_column(String(50), nullable=False, default="LOCAL")
+    base_commit: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    head_commit: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="PENDING")
+    summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    total_findings: Mapped[int] = mapped_column(default=0, nullable=False)
+    execution_time_seconds: Mapped[float] = mapped_column(default=0.0, nullable=False)
+    cancellation_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    review_metadata: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+
+    # Relationships
+    findings: Mapped[list["ReviewFindingEntity"]] = relationship(
+        "ReviewFindingEntity",
+        back_populates="session",
+        cascade="all, delete-orphan",
+    )
+
+
+class ReviewFindingEntity(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    __tablename__ = "review_findings"
+
+    review_id: Mapped[UUID] = mapped_column(
+        GUID,
+        ForeignKey("review_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    organization_id: Mapped[UUID] = mapped_column(
+        GUID,
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    file_path: Mapped[str] = mapped_column(String(1024), nullable=False)
+    start_line: Mapped[int] = mapped_column(nullable=False)
+    end_line: Mapped[int] = mapped_column(nullable=False)
+    rule_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    severity: Mapped[str] = mapped_column(String(50), nullable=False)
+    category: Mapped[str] = mapped_column(String(50), nullable=False)
+    origin: Mapped[str] = mapped_column(String(50), nullable=False)
+    confidence: Mapped[float] = mapped_column(default=1.0, nullable=False)
+    technical_evidence: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    suggestion: Mapped[str | None] = mapped_column(Text, nullable=True)
+    deduplication_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    tool_name: Mapped[str] = mapped_column(String(100), nullable=False, default="aegis_review")
+    finding_metadata: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+
+    session: Mapped["ReviewSessionEntity"] = relationship(
+        "ReviewSessionEntity",
+        back_populates="findings",
+    )

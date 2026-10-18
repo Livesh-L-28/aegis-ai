@@ -1,0 +1,41 @@
+"""Domain models for AEGIS AI Code Review."""
+
+from packages.review.domain.models import (
+    AffectedArtifacts,
+    ChangedFile,
+    ChangedSymbol,
+    DiffChangeType,
+    DiffHunk,
+    FindingCategory,
+    FindingOrigin,
+    FindingSeverity,
+    GitDiffSummary,
+    ReviewFinding,
+    ReviewReport,
+    ReviewSession,
+    ReviewStatus,
+    ReviewType,
+    SourceLocation,
+    ValidationStatus,
+    generate_finding_fingerprint,
+)
+
+__all__ = [
+    "AffectedArtifacts",
+    "ChangedFile",
+    "ChangedSymbol",
+    "DiffChangeType",
+    "DiffHunk",
+    "FindingCategory",
+    "FindingOrigin",
+    "FindingSeverity",
+    "GitDiffSummary",
+    "ReviewFinding",
+    "ReviewReport",
+    "ReviewSession",
+    "ReviewStatus",
+    "ReviewType",
+    "SourceLocation",
+    "ValidationStatus",
+    "generate_finding_fingerprint",
+]

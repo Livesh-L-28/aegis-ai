@@ -488,3 +488,55 @@ class SLOResponse(BaseSchema):
 
 
 
+
+
+# --- Code Review Schemas ---
+class ReviewCreateRequest(BaseSchema):
+    repository_name: str
+    diff_text: str
+    base_commit: str | None = None
+    head_commit: str | None = None
+    project_id: UUID | None = None
+    enable_ai: bool = False
+    metadata: dict = Field(default_factory=dict)
+
+
+class ReviewCancelRequest(BaseSchema):
+    reason: str = "User requested cancellation"
+
+
+class ReviewFindingResponse(BaseSchema):
+    id: UUID
+    review_id: UUID
+    file_path: str
+    start_line: int
+    end_line: int
+    rule_id: str
+    title: str
+    message: str
+    severity: str
+    category: str
+    origin: str
+    confidence: float
+    technical_evidence: str
+    suggestion: str | None = None
+    deduplication_hash: str
+    tool_name: str
+    created_at: datetime
+
+
+class ReviewSessionResponse(BaseSchema):
+    id: UUID
+    organization_id: UUID
+    project_id: UUID | None = None
+    repository_name: str
+    review_type: str
+    base_commit: str | None = None
+    head_commit: str | None = None
+    status: str
+    summary: str
+    total_findings: int
+    execution_time_seconds: float
+    cancellation_reason: str | None = None
+    created_at: datetime
+    updated_at: datetime

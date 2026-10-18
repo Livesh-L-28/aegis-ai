@@ -13,6 +13,7 @@ from apps.api.app.api.v1.endpoints import (
     organizations,
     projects,
     remediations,
+    review,
     simulation,
 )
 
@@ -49,5 +50,5 @@ v1_router.include_router(remediations.router)
 # Phase 7 Autonomous Reliability & Evaluation Endpoints
 v1_router.include_router(autonomy.router)
 
-
-
+# Repository Intelligence & AI Code Review Endpoints
+v1_router.include_router(review.router)
