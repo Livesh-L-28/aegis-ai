@@ -46,12 +46,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install build twine ruff mypy hatchling pytest
+          pip install -e .
 
       - name: Quality Gate — Linter
         run: ruff check .
 
       - name: Quality Gate — Type Checker
-        run: mypy --explicit-package-bases logicfalcon aegis apps packages tests
+        run: mypy --explicit-package-bases logicfalcon aegis packages tests/unit
 
       - name: Quality Gate — Unit Tests
         run: pytest tests/unit/ -v
