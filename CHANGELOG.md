@@ -1,8 +1,24 @@
-# AEGIS AI — Changelog
+# LogicFalcon / AEGIS AI — Changelog
 
-All notable changes to the AEGIS AI platform are documented in this file.
+All notable changes to the LogicFalcon developer platform (powered by AEGIS AI) are documented in this file.
 
-## [Unreleased] — 1.0.0-rc1
+## [0.1.0] — 2026-10-18: LogicFalcon Initial Open-Source Release
+
+Initial public open-source release of **LogicFalcon** under the Apache License 2.0.
+
+### Highlights & Capabilities
+- **Deterministic Static Code Review**: AST-grounded repository intelligence engine for local Git diff analysis.
+- **Multi-Language AST Parsers**: Static symbol and dependency extraction for Python (`PythonASTParser`) and JavaScript/TypeScript (`JavaScriptTypeScriptParser`).
+- **In-Process Security Rules**: Deterministic checks for hardcoded credentials (`SEC-003`), unsafe subprocess calls with `shell=True` (`SEC-002`), arbitrary dynamic execution via `eval`/`exec` (`SEC-001`), insecure pickle deserialization (`SEC-004`), and broad exception suppression (`QUAL-001`).
+- **Reverse Dependency Traversal**: Automated discovery of test files impacted by source modifications.
+- **Unified Developer CLI**: Added `logicfalcon` CLI exposing `review` and `doctor` subcommands.
+- **Backwards Compatibility**: Preserved `aegis` CLI entry point as a drop-in compatibility alias.
+- **Python SDK**: Exported core domain models (`LocalReviewEngine`, `ReviewConfig`, `ReviewReport`, `FindingSeverity`, `AutonomousDebuggingService`) via `logicfalcon`.
+- **Open-Source Licensing**: Released under Apache License 2.0 with inbound=outbound contributor guidelines and separate trademark reservation.
+
+---
+
+## [Unreleased] — 1.0.0-rc1 (AEGIS AI Core)
 
 ### Repository Intelligence & AI Code Review Engine
 - **Unified Diff Parsing**: Added pure-Python unified Git diff parser (`packages/review/git/diff_parser.py`) tracking 1-indexed hunk line numbers, additions, deletions, renames, and binary files with bounded memory limits.

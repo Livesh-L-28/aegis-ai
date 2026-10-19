@@ -18,8 +18,8 @@ SEVERITY_WEIGHTS: dict[FindingSeverity, int] = {
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="aegis review",
-        description="AEGIS AI — Repository Intelligence & Automated Code Review CLI",
+        prog="logicfalcon review",
+        description="LogicFalcon — Repository Intelligence & Automated Code Review CLI (Powered by AEGIS AI)",
     )
     parser.add_argument(
         "--repo",
@@ -72,7 +72,7 @@ def build_parser() -> argparse.ArgumentParser:
 def format_text_report(report: ReviewReport, changed_only: bool = False) -> str:
     lines = [
         "=" * 78,
-        "🛡️  AEGIS AI — Repository Intelligence & Code Review Report",
+        "🦅  LogicFalcon — Repository Intelligence & Code Review Report (Powered by AEGIS AI)",
         "=" * 78,
         f"Repository:   {report.repository_path}",
         f"Base Commit:  {report.base_commit or 'HEAD'}",

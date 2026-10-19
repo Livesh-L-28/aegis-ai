@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main, master]
 
+permissions:
+  contents: read
+
 jobs:
   quality-gates:
     name: Code Quality & Security Gates
@@ -57,7 +60,7 @@ jobs:
 
       - name: Type Check (mypy)
         run: |
-          mypy --explicit-package-bases apps packages tests
+          mypy --explicit-package-bases logicfalcon aegis apps packages tests
 
       - name: Run Database Migrations (PostgreSQL + pgvector)
         env:

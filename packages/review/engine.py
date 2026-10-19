@@ -6,9 +6,18 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from packages.intelligence.evidence.graph_models import (
+    EvidenceRecord,
+    ProvenanceTag,
+)
+from packages.intelligence.evidence.graph_models import (
+    ValidationStatus as EvidenceValidationStatus,
+)
+from packages.logging.logger import get_logger
 from packages.review.adapters.ast_security import ASTSecurityAdapter
 from packages.review.adapters.base import StaticAnalysisAdapter
 from packages.review.adapters.ruff_adapter import RuffAnalysisAdapter
@@ -32,6 +41,8 @@ from packages.review.domain.models import (
 from packages.review.git.diff_parser import GitDiffParser
 from packages.review.security.path_validation import validate_contained_path
 
+logger = get_logger("aegis.review.engine")
+
 
 class ReviewCancelledException(Exception):
     """Raised when review execution is cooperatively cancelled mid-flight."""
@@ -46,6 +57,9 @@ class ReviewConfig(BaseModel):
     max_diff_bytes: int = 10_000_000  # 10 MB
     enable_external_tools: bool = False  # Disabled by default for process safety
     enable_ai_review: bool = False  # Optional AI review integration
+    repository_id: UUID | None = None
+    commit_sha: str | None = None
+    organization_id: UUID | None = None
     ignored_patterns: list[str] = Field(
         default_factory=lambda: [
             ".git",
@@ -72,9 +86,11 @@ class LocalReviewEngine:
         config: ReviewConfig | None = None,
         custom_adapters: list[StaticAnalysisAdapter] | None = None,
         ai_reviewer: AIReviewEngine | None = None,
+        evidence_service: Any = None,
     ) -> None:
         self.repo_root = Path(repo_root).resolve()
         self.config = config or ReviewConfig()
+        self.evidence_service = evidence_service
         self.diff_parser = GitDiffParser(max_diff_bytes=self.config.max_diff_bytes)
         self.symbol_mapper = SymbolMapper()
         self.dependency_graph = DependencyGraph(self.repo_root)
@@ -95,13 +111,22 @@ class LocalReviewEngine:
 
     def review_diff(self, diff_text: str, cancellation_token: Callable[[], bool] | None = None) -> ReviewReport:
         """Synchronously performs a complete review on raw unified Git diff text."""
-        return asyncio.run(self.review_diff_async(diff_text=diff_text, enable_ai=self.config.enable_ai_review, cancellation_token=cancellation_token))
+        return asyncio.run(
+            self.review_diff_async(
+                diff_text=diff_text,
+                enable_ai=self.config.enable_ai_review,
+                cancellation_token=cancellation_token,
+            )
+        )
 
     async def review_diff_async(
         self,
         diff_text: str,
         enable_ai: bool = False,
         cancellation_token: Callable[[], bool] | None = None,
+        repository_id: UUID | None = None,
+        commit_sha: str | None = None,
+        organization_id: UUID | None = None,
     ) -> ReviewReport:
         """Asynchronously executes review with optional AI hypothesis evaluation."""
         start_time = time.perf_counter()
@@ -216,6 +241,10 @@ class LocalReviewEngine:
         if cancellation_token and cancellation_token():
             raise ReviewCancelledException("Review cancelled before dependency graph analysis.")
 
+        eff_repo_id = repository_id or self.config.repository_id
+        eff_commit_sha = commit_sha or self.config.commit_sha or diff_summary.head_commit
+        eff_org_id = organization_id or self.config.organization_id
+
         # Build dependency graph and discover affected tests
         try:
             self.dependency_graph.build_graph(files=files_reviewed if files_reviewed else None)
@@ -229,6 +258,21 @@ class LocalReviewEngine:
                 changed_symbols=changed_symbols_all,
                 discovery_warnings=[f"Failed to build full dependency graph: {e}"],
             )
+
+        # Consult persisted evidence graph if available
+        if self.evidence_service and eff_repo_id and eff_commit_sha and eff_org_id:
+            try:
+                persisted_tests = await self.evidence_service.get_affected_tests(
+                    organization_id=eff_org_id,
+                    repository_id=eff_repo_id,
+                    commit_sha=eff_commit_sha,
+                    changed_files=changed_files_list,
+                )
+                if persisted_tests:
+                    combined = set(affected_artifacts.affected_tests).union(persisted_tests)
+                    affected_artifacts.affected_tests = sorted(combined)
+            except Exception as e:
+                logger.info("Persisted evidence graph test lookup fallback: %s", e)
 
         if cancellation_token and cancellation_token():
             raise ReviewCancelledException("Review cancelled before AI review.")
@@ -249,6 +293,48 @@ class LocalReviewEngine:
                 errors.extend(ai_errors)
             except Exception as e:
                 errors.append(f"AI review execution error: {e}")
+
+        # Record findings as evidence in persistent graph if service is available
+        if self.evidence_service and eff_org_id and eff_repo_id:
+            for f in findings:
+                try:
+                    ev_status = EvidenceValidationStatus.VALIDATED
+                    if f.validation_status.value == "REJECTED_LOCATION":
+                        ev_status = EvidenceValidationStatus.REJECTED_LOCATION
+                    elif f.validation_status.value == "REJECTED_CONTRADICTED":
+                        ev_status = EvidenceValidationStatus.REJECTED_CONTRADICTED
+                    elif f.validation_status.value == "UNVERIFIED":
+                        ev_status = EvidenceValidationStatus.UNVERIFIED
+
+                    ev_rec = EvidenceRecord(
+                        id=f.id,
+                        evidence_type=f.origin.value,
+                        provenance=ProvenanceTag(
+                            source=f.tool_name or "local_review_engine",
+                            tool_version="1.0",
+                        ),
+                        file_path=f.location.file_path,
+                        start_line=f.location.start_line,
+                        end_line=f.location.end_line,
+                        symbol_name=f.location.symbol_name,
+                        content=f.message,
+                        structured_payload={
+                            "rule_id": f.rule_id,
+                            "title": f.title,
+                            "severity": f.severity.value,
+                            "category": f.category.value,
+                        },
+                        confidence=f.confidence,
+                        validation_status=ev_status,
+                    )
+                    await self.evidence_service.record_evidence(
+                        organization_id=eff_org_id,
+                        record=ev_rec,
+                        repository_id=eff_repo_id,
+                        commit_sha=eff_commit_sha,
+                    )
+                except Exception as exc:
+                    logger.debug("Evidence record persistence omitted: %s", exc)
 
         elapsed = time.perf_counter() - start_time
         return ReviewReport(

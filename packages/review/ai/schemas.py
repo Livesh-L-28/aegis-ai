@@ -20,6 +20,7 @@ class AIReviewFindingItem(BaseModel):
     remediation: str = ""
     confidence: float = Field(default=0.8, ge=0.0, le=1.0)
     rule_id: str = "AI-REVIEW"
+    symbol_name: str | None = None
 
 
 class AIReviewResponse(BaseModel):

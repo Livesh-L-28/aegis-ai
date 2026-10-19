@@ -1,21 +1,54 @@
-# AEGIS AI — Enterprise-grade AI Engineering & Autonomous Reliability Platform
+# LogicFalcon — Fast, precise engineering intelligence.
 
-> **Status: Phase 7 — Autonomous Reliability + Evaluation + Production Hardening COMPLETE (CURRENT)**
-
-AEGIS is an enterprise AI Engineering & Autonomous Reliability Platform engineered to detect production incidents, investigate evidence across metrics/logs/traces, isolate root causes, validate remediation, and assist engineers with verified deployments.
+> **LogicFalcon, powered by AEGIS AI**  
+> LogicFalcon is an AI-powered software engineering intelligence platform for evidence-grounded code review, repository analysis, change-impact assessment, root-cause analysis, and safe fix proposals. Powered by AEGIS AI.
 
 ---
 
-## The 7-Phase Roadmap
+## Quickstart & Installation
 
-The complete AEGIS roadmap is permanently frozen at exactly 7 phases:
-1. **Enterprise Foundation** — **COMPLETE**
-2. **Production Simulation + Observability** — **COMPLETE**
-3. **System + Code + Knowledge Intelligence** — **COMPLETE**
-4. **Evidence + AI Reasoning** — **COMPLETE**
-5. **AI Trust + Reliability** — **COMPLETE**
-6. **AI Remediation + Human Approval + Deployment** — **COMPLETE**
-7. **Autonomous Reliability + Evaluation + Production Hardening** — **COMPLETE (CURRENT)**
+### 1. Installation via pip
+
+```bash
+pip install logicfalcon
+```
+
+### 2. Developer CLI Usage
+
+```bash
+# Verify environment and AST analyzer capabilities
+logicfalcon doctor
+
+# Run deterministic code review on local git diff
+logicfalcon review --repo .
+
+# Machine-readable JSON output for CI pipelines
+logicfalcon review --repo . --format json --severity-threshold ERROR
+```
+
+### 3. Python SDK Usage
+
+```python
+from pathlib import Path
+from logicfalcon import LocalReviewEngine, ReviewConfig
+
+config = ReviewConfig(
+    max_file_size_bytes=1_000_000,
+    per_file_timeout_seconds=10.0,
+    enable_ai_review=False,  # Deterministic static analysis by default
+)
+engine = LocalReviewEngine(repo_root=Path("."), config=config)
+report = engine.review_local_git_diff()
+print(f"Scanned {len(report.files_reviewed)} files. Found {len(report.findings)} issues.")
+```
+
+---
+
+## Platform Engine (AEGIS AI Foundation)
+
+LogicFalcon's core reasoning, multi-language AST comprehension, and autonomous reliability engines are built on the **AEGIS AI** platform architecture.
+
+> **Engine Status: Phase 7 — Autonomous Reliability + Evaluation + Production Hardening COMPLETE (CURRENT)**
 
 > **Phase 7 Scope Note:** Phase 7 concludes the roadmap by delivering bounded autonomous reliability under deterministic safety controls: bounded agent execution loops with strict tool and cost budgets, multi-tiered autonomy levels (`LEVEL_0` through `LEVEL_3`), emergency stop kill switches, change freeze mechanisms, autonomy circuit breakers, continuous evaluation against golden and adversarial datasets with strict release gates, SLO and error budget tracking, and operational learning from validated incidents without self-modifying code or policies.
 
@@ -133,11 +166,19 @@ Experience the complete **Observe → Reason → Propose → Approve → Sandbox
 uv run ruff check .
 
 # Strict static type check
-uv run mypy --explicit-package-bases apps packages tests
+uv run mypy --explicit-package-bases logicfalcon aegis apps packages tests
 
-# Automated test suite (103/103 passed)
+# Automated test suite
 uv run pytest tests/ -q
-
-# Frontend production build
-npm --prefix apps/web run build
 ```
+
+---
+
+## License & Trademarks
+
+- **Software License**: LogicFalcon is open-source software licensed under the **Apache License, Version 2.0**. See the authoritative license terms in [`LICENSE`](LICENSE).
+- **Platform Foundation**: LogicFalcon is powered by the **AEGIS AI** engineering intelligence platform.
+- **Copyright & Attribution**: Copyright 2026 LogicFalcon Authors & Contributors (powered by AEGIS AI). Third-party dependencies retain their respective permissive licenses (MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause).
+- **Trademarks**: The LogicFalcon name and logo are product brand identifiers separate from the software copyright license and are not licensed for unrestricted trademark use.
+- **Contributing**: Contributions are subject to the terms in [`CONTRIBUTING.md`](CONTRIBUTING.md).
+

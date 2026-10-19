@@ -163,6 +163,17 @@ class AIReviewEngine:
         results: list[ReviewFinding] = []
         seen_fingerprints: set[str] = set()
 
+        # Build index of known symbols from context for factuality gating
+        file_symbols: dict[str, set[str]] = {}
+        for sym in context.changed_symbols:
+            fp = sym.get("file_path", "")
+            if fp not in file_symbols:
+                file_symbols[fp] = set()
+            if "name" in sym:
+                file_symbols[fp].add(sym["name"])
+            if "qualified_name" in sym:
+                file_symbols[fp].add(sym["qualified_name"])
+
         for item in raw_findings:
             # 1. Location validation: file must exist in changed files
             if item.file_path not in valid_files:
@@ -173,8 +184,39 @@ class AIReviewEngine:
                 continue
 
             # 2. Line range validation
-            start_line = max(1, item.start_line)
+            validation_status = ValidationStatus.VALIDATED
+            start_line = item.start_line
             end_line = item.end_line or start_line
+
+            if start_line < 1 or (item.end_line is not None and item.end_line < start_line):
+                logger.info(
+                    "Flagging finding with invalid line range [%s, %s] as REJECTED_LOCATION",
+                    start_line,
+                    end_line,
+                )
+                validation_status = ValidationStatus.REJECTED_LOCATION
+
+            # 3. Symbol verification against revision-indexed AST symbols
+            claimed_symbol = getattr(item, "symbol_name", None)
+            if claimed_symbol:
+                known_for_file = file_symbols.get(item.file_path)
+                if known_for_file is not None and len(known_for_file) > 0:
+                    if claimed_symbol not in known_for_file:
+                        logger.info(
+                            "Rejecting finding claiming fabricated symbol '%s' not present in %s",
+                            claimed_symbol,
+                            item.file_path,
+                        )
+                        validation_status = ValidationStatus.REJECTED_LOCATION
+                    else:
+                        if validation_status == ValidationStatus.VALIDATED:
+                            validation_status = ValidationStatus.VALIDATED
+                else:
+                    if validation_status == ValidationStatus.VALIDATED:
+                        validation_status = ValidationStatus.UNVERIFIED
+            else:
+                if item.file_path not in file_symbols and validation_status == ValidationStatus.VALIDATED:
+                    validation_status = ValidationStatus.UNVERIFIED
 
             finding = ReviewFinding(
                 review_id=review_id,
@@ -186,18 +228,19 @@ class AIReviewEngine:
                 origin=FindingOrigin.HYPOTHESIS,
                 location=SourceLocation(
                     file_path=item.file_path,
-                    start_line=start_line,
-                    end_line=end_line,
+                    start_line=max(1, start_line),
+                    end_line=max(1, end_line),
+                    symbol_name=claimed_symbol,
                 ),
                 suggestion=item.remediation,
                 technical_evidence=item.technical_evidence,
-                validation_status=ValidationStatus.VALIDATED,
+                validation_status=validation_status,
                 tool_name="ai_review_engine",
                 confidence=round(min(1.0, max(0.0, item.confidence)), 2),
                 metadata={"impact": item.impact},
             )
 
-            # 3. Deduplication check
+            # 4. Deduplication check
             if finding.deduplication_hash in seen_fingerprints:
                 continue
 

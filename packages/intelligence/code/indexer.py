@@ -46,6 +46,10 @@ class SymbolType(StrEnum):
     FUNCTION = "FUNCTION"
     METHOD = "METHOD"
     VARIABLE = "VARIABLE"
+    INTERFACE = "INTERFACE"
+    TYPE_ALIAS = "TYPE_ALIAS"
+    ENUM = "ENUM"
+    CONSTANT = "CONSTANT"
 
 
 class CodeSymbol(BaseModel):
@@ -65,6 +69,9 @@ class CodeDependency(BaseModel):
     source_file: str
     target_module: str
     imported_names: list[str] = Field(default_factory=list)
+    edge_type: str = "IMPORT"
+    resolution_quality: str = "RESOLVED"  # RESOLVED, UNRESOLVED, AMBIGUOUS, INFERRED
+    is_type_only: bool = False
 
 
 class IndexedFile(BaseModel):
@@ -175,7 +182,11 @@ class RepositoryIndexer:
 
     def classify_file(self, rel_path: str) -> FileClassification:
         lower = rel_path.lower()
-        if "test" in lower or lower.startswith("tests/"):
+        if (
+            "test" in lower
+            or lower.startswith(("tests/", "__tests__/"))
+            or lower.endswith(("_test.py", "test.py", ".test.ts", ".test.tsx", ".test.js", ".test.jsx", ".spec.ts", ".spec.tsx", ".spec.js"))
+        ):
             return FileClassification.TEST
         if lower.endswith((".md", ".rst", ".txt")):
             return FileClassification.DOCUMENTATION
@@ -183,7 +194,7 @@ class RepositoryIndexer:
             return FileClassification.CONFIG
         if "docker" in lower or lower.endswith("dockerfile"):
             return FileClassification.INFRASTRUCTURE
-        if lower.endswith((".py", ".ts", ".js", ".go", ".rs")):
+        if lower.endswith((".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".go", ".rs")):
             return FileClassification.SOURCE
         return FileClassification.UNKNOWN
 
@@ -191,6 +202,11 @@ class RepositoryIndexer:
         """Indexes all discoverable files incrementally with hash deduplication."""
         if not self.root_dir.exists():
             return []
+
+        from packages.intelligence.code.parser_base import (
+            ParserSupportStatus,
+            default_parser_registry,
+        )
 
         for p in self.root_dir.rglob("*"):
             if not p.is_file():
@@ -217,11 +233,14 @@ class RepositoryIndexer:
             symbols: list[CodeSymbol] = []
             imports: list[CodeDependency] = []
 
-            if lang == "python":
+            parser = default_parser_registry.get_parser_for_file(rel_str)
+            if parser.support_status != ParserSupportStatus.UNSUPPORTED:
                 try:
                     text_content = raw_bytes.decode("utf-8", errors="ignore")
                     clean_content = sanitize_source_content(text_content)
-                    symbols, imports = PythonASTParser.parse_source(rel_str, clean_content)
+                    res = parser.parse_source(rel_str, clean_content)
+                    symbols = res.symbols
+                    imports = res.dependencies
                 except Exception:
                     pass
 

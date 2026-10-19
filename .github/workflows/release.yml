@@ -1,0 +1,126 @@
+name: Release Distribution (PyPI Trusted Publishing)
+
+# This workflow builds, tests, verifies, and securely publishes LogicFalcon distributions.
+# SAFETY ENFORCEMENT:
+# 1. This workflow NEVER triggers on ordinary git push or pull_request events.
+# 2. It requires an explicit manual trigger (workflow_dispatch) or published GitHub Release.
+# 3. It utilizes PyPI Trusted Publishing (OIDC tokens); zero long-lived secrets are stored.
+# 4. Publication requires approval via the GitHub protected environment 'pypi'.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Publishing Target Index'
+        required: true
+        default: 'testpypi'
+        type: choice
+        options:
+          - testpypi
+          - pypi
+      confirm:
+        description: 'Type YES to authorize distribution upload'
+        required: true
+        default: 'NO'
+
+permissions:
+  contents: read
+
+jobs:
+  validate-and-build:
+    name: Build & Pre-Release Verification
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install Build and Verification Tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine ruff mypy hatchling pytest
+
+      - name: Quality Gate — Linter
+        run: ruff check .
+
+      - name: Quality Gate — Type Checker
+        run: mypy --explicit-package-bases logicfalcon aegis apps packages tests
+
+      - name: Quality Gate — Unit Tests
+        run: pytest tests/unit/ -v
+
+      - name: Build Wheel and Source Distribution
+        run: python -m build
+
+      - name: Package Validation (Twine)
+        run: twine check --strict dist/*
+
+      - name: Distribution Archive Security Check
+        run: |
+          python -c '
+          import zipfile, tarfile, glob, sys
+          whl = glob.glob("dist/*.whl")[0]
+          tar = glob.glob("dist/*.tar.gz")[0]
+          with zipfile.ZipFile(whl, "r") as z:
+              names = z.namelist()
+              if any("render_schema" in n for n in names):
+                  sys.exit("SECURITY VIOLATION: render_schema found in wheel")
+              if any(".env" in n for n in names):
+                  sys.exit("SECURITY VIOLATION: .env found in wheel")
+          with tarfile.open(tar, "r:gz") as t:
+              names = t.getnames()
+              if any("render_schema" in n for n in names):
+                  sys.exit("SECURITY VIOLATION: render_schema found in sdist")
+          print("[PASS] Archive security check clean.")
+          '
+
+      - name: Generate Checksums
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: logicfalcon-dist
+          path: dist/
+          retention-days: 7
+
+  publish:
+    name: Secure Publish to PyPI
+    needs: validate-and-build
+    runs-on: ubuntu-latest
+    # STRICT PUBLISHING SAFEGUARDS:
+    # 1. Publication requires an intentional manual workflow_dispatch trigger.
+    # 2. Upload strictly requires explicit confirmation (confirm == 'YES').
+    # 3. Ordinary pushes, pull requests, or published GitHub Releases CANNOT bypass confirmation.
+    # 4. Target environment distinctly separates TestPyPI ('testpypi') and production PyPI ('pypi').
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.confirm == 'YES'
+    environment:
+      name: ${{ github.event.inputs.target == 'pypi' && 'pypi' || 'testpypi' }}
+      url: ${{ github.event.inputs.target == 'pypi' && 'https://pypi.org/p/logicfalcon' || 'https://test.pypi.org/project/logicfalcon' }}
+    permissions:
+      id-token: write  # Mandatory for PyPI Trusted Publishing (OIDC)
+      contents: read
+    steps:
+      - name: Download Build Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: logicfalcon-dist
+          path: dist/
+
+      - name: Publish to PyPI via Trusted Publishing
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: ${{ github.event.inputs.target == 'testpypi' && 'https://test.pypi.org/legacy/' || '' }}
+          packages-dir: dist/
+          verify-metadata: true
+          verbose: true

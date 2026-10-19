@@ -15,7 +15,9 @@ class Settings(BaseSettings):
 
     # Core Application Settings
     ENVIRONMENT: Literal["development", "test", "staging", "production"] = "development"
-    APP_NAME: str = "AEGIS AI"
+    APP_NAME: str = "LogicFalcon (powered by AEGIS AI)"
+    PRODUCT_NAME: str = "LogicFalcon"
+    PLATFORM_NAME: str = "AEGIS AI"
     APP_VERSION: str = "0.1.0"
     API_V1_PREFIX: str = "/api/v1"
     LOG_LEVEL: str = "INFO"

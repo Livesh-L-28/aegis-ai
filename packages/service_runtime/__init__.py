@@ -1,4 +1,7 @@
-from packages.service_runtime.base import create_simulated_service
+try:
+    from packages.service_runtime.base import create_simulated_service
+except (ImportError, ModuleNotFoundError):
+    create_simulated_service = None  # type: ignore[assignment, misc]
 from packages.service_runtime.metrics import (
     DATABASE_ERRORS_TOTAL,
     DATABASE_QUERY_DURATION_SECONDS,
