@@ -85,7 +85,7 @@ jobs:
       - name: Generate Checksums
         run: |
           cd dist
-          sha256sum * > SHA256SUMS
+          sha256sum *.whl *.tar.gz > SHA256SUMS
           cat SHA256SUMS
 
       - name: Upload Build Artifacts
@@ -118,10 +118,29 @@ jobs:
           name: logicfalcon-dist
           path: dist/
 
+      - name: Verify Checksums
+        run: |
+          cd dist
+          sha256sum -c SHA256SUMS
+
+      - name: Stage Verified Distribution Files
+        run: |
+          mkdir -p dist-publish
+          cp dist/*.whl dist/*.tar.gz dist-publish/
+          count=$(find dist-publish -maxdepth 1 -type f | wc -l | tr -d ' ')
+          if [ "$count" -ne 2 ]; then
+            echo "Security Error: Expected exactly 2 distribution files (.whl and .tar.gz), found $count"
+            ls -la dist-publish
+            exit 1
+          fi
+          echo "Verified distribution files staged for publishing:"
+          ls -la dist-publish
+
       - name: Publish to PyPI via Trusted Publishing
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           repository-url: ${{ github.event.inputs.target == 'testpypi' && 'https://test.pypi.org/legacy/' || '' }}
-          packages-dir: dist/
+          packages-dir: dist-publish/
           verify-metadata: true
           verbose: true
+
