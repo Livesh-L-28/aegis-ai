@@ -92,3 +92,41 @@ def test_typescript_stub_is_unsupported() -> None:
     assert adapter.STATUS == "UNSUPPORTED_IN_MILESTONE_1"
     findings = adapter.analyze_file("app.ts", "const x: number = 42;")
     assert len(findings) == 0
+
+
+def test_ast_security_adapter_extended_rules_and_proposed_fixes() -> None:
+    adapter = ASTSecurityAdapter()
+    extended_code = """import tempfile
+
+def process_items(items=[]):  # QUAL-002
+    if items == items:  # QUAL-003
+        pass
+
+def write_data(query_val: str):
+    f = open("log.txt", "w")  # QUAL-006
+    tmp = tempfile.mktemp()  # SEC-006
+    cursor.execute(f"SELECT * FROM users WHERE name = '{query_val}'")  # SEC-007
+"""
+    findings = adapter.analyze_file("sample.py", extended_code)
+    rule_ids = {f.rule_id for f in findings}
+
+    assert "QUAL-002" in rule_ids
+    assert "QUAL-003" in rule_ids
+    assert "QUAL-006" in rule_ids
+    assert "SEC-006" in rule_ids
+    assert "SEC-007" in rule_ids
+
+    # Verify proposed fixes exist and are populated
+    mutable_def = next(f for f in findings if f.rule_id == "QUAL-002")
+    assert mutable_def.proposed_fix is not None
+    assert mutable_def.proposed_fix.replacement_code == "None"
+    assert mutable_def.why_it_matters != ""
+
+    open_res = next(f for f in findings if f.rule_id == "QUAL-006")
+    assert open_res.proposed_fix is not None
+    assert "with" in open_res.proposed_fix.explanation
+
+    sql_inj = next(f for f in findings if f.rule_id == "SEC-007")
+    assert sql_inj.severity == FindingSeverity.CRITICAL
+    assert sql_inj.category == FindingCategory.SECURITY
+

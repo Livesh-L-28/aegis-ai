@@ -5,7 +5,9 @@ from packages.security.rbac import AuthenticatedPrincipal, Permission, Role
 
 def test_settings_defaults() -> None:
     settings = Settings()
-    assert settings.APP_NAME == "AEGIS AI"
+    assert settings.APP_NAME in ["LogicFalcon (powered by AEGIS AI)", "AEGIS AI"]
+    assert settings.PRODUCT_NAME == "LogicFalcon"
+    assert settings.PLATFORM_NAME == "AEGIS AI"
     assert settings.API_V1_PREFIX == "/api/v1"
     assert settings.ENVIRONMENT in ["development", "test", "staging", "production"]
 

@@ -12,7 +12,7 @@ class BaseSchema(BaseModel):
 class HealthResponse(BaseSchema):
     status: str = "ok"
     service: str = "aegis-api"
-    version: str = "0.1.0"
+    version: str = "0.1.1"
 
 
 class DependencyStatus(BaseSchema):
@@ -540,3 +540,204 @@ class ReviewSessionResponse(BaseSchema):
     cancellation_reason: str | None = None
     created_at: datetime
     updated_at: datetime
+
+
+# --- Engineering Evidence Graph Schemas ---
+class CodeSymbolResponse(BaseSchema):
+    id: UUID
+    organization_id: UUID
+    file_node_id: UUID
+    name: str
+    qualified_name: str
+    symbol_type: str
+    start_line: int
+    end_line: int
+    signature: str = ""
+    docstring_summary: str | None = None
+    created_at: datetime
+
+
+class PaginatedSymbolsResponse(BaseSchema):
+    items: list[CodeSymbolResponse]
+    total: int
+    limit: int
+    offset: int
+
+
+class AffectedTestsResponse(BaseSchema):
+    repository_id: UUID
+    commit_sha: str
+    changed_files: list[str]
+    affected_tests: list[str]
+
+
+class EngineeringEvidenceResponse(BaseSchema):
+    id: UUID
+    organization_id: UUID
+    repository_id: UUID | None = None
+    revision_id: UUID | None = None
+    evidence_type: str
+    provenance_source: str
+    file_path: str | None = None
+    start_line: int | None = None
+    end_line: int | None = None
+    symbol_name: str | None = None
+    content: str
+    structured_payload: dict = Field(default_factory=dict)
+    confidence: float
+    content_hash: str
+    validation_status: str
+    created_at: datetime
+
+
+class PaginatedEvidenceResponse(BaseSchema):
+    items: list[EngineeringEvidenceResponse]
+    total: int
+    limit: int
+    offset: int
+
+
+# --- Phase 2 System Intelligence Schemas ---
+class ParserCapabilityItem(BaseSchema):
+    language: str
+    support_status: str
+    file_extensions: list[str]
+    parser_version: str
+    features: list[str] = Field(default_factory=list)
+
+
+class ParserCapabilitiesResponse(BaseSchema):
+    supported_languages: list[ParserCapabilityItem]
+    total_parsers: int
+
+
+class ChangeImpactRequest(BaseSchema):
+    changed_files: list[str]
+    max_depth: int = Field(3, ge=1, le=10)
+
+
+class ChangeImpactResponse(BaseSchema):
+    repository_id: UUID
+    commit_sha: str
+    changed_files: list[str]
+    affected_symbols: list[str]
+    affected_tests: list[str]
+    affected_api_endpoints: list[str]
+    affected_database_models: list[str]
+    risk_level: str
+    risk_reasons: list[str]
+    selection_explanations: dict[str, str]
+    unresolved_dependencies: list[str]
+    confidence: float
+
+
+class SystemContractsResponse(BaseSchema):
+    repository_id: UUID
+    commit_sha: str
+    api_endpoints: list[dict] = Field(default_factory=list)
+    client_api_calls: list[dict] = Field(default_factory=list)
+    database_models: list[dict] = Field(default_factory=list)
+    migrations: list[dict] = Field(default_factory=list)
+    config_references: list[dict] = Field(default_factory=list)
+
+
+# --- Phase 3 Autonomous Debugging Schemas ---
+class DebuggingCapabilitiesResponse(BaseSchema):
+    supported_languages: list[str]
+    stack_trace_formats: list[str]
+    supported_verdicts: list[str]
+    verification_actions: list[str]
+    remediation_mode: str
+    autonomous_patch_application: bool
+    secret_redaction_enabled: bool
+
+
+class StackTraceFrameResponse(BaseSchema):
+    file_path: str
+    line_number: int
+    function_name: str
+    code_context: str | None = None
+    origin: str
+    is_resolved: bool
+    matched_symbol: str | None = None
+    is_protected_file: bool = False
+    resolution_note: str = ""
+
+
+class DebuggingEvidenceResponse(BaseSchema):
+    id: UUID
+    evidence_type: str
+    file_path: str | None = None
+    symbol_name: str | None = None
+    line_range: tuple[int, int] | None = None
+    content: str
+    confidence: float
+    relevance_level: str
+    provenance: str
+    explanation: str
+    metadata: dict = Field(default_factory=dict)
+
+
+class RankedHypothesisResponse(BaseSchema):
+    id: UUID
+    title: str
+    description: str
+    verdict: str
+    score: float
+    confidence: float
+    supporting_evidence_ids: list[UUID]
+    contradicting_evidence_ids: list[UUID]
+    affected_file: str | None = None
+    affected_symbol: str | None = None
+    reasoning_summary: str
+    assumptions: list[str]
+    ranking_rationale: str
+    verification_steps: list[str]
+
+
+class VerificationStepResponse(BaseSchema):
+    id: UUID
+    hypothesis_id: UUID
+    action_type: str
+    target: str
+    command_preview: str | None = None
+    is_executable: bool = False
+    expected_outcome: str
+    actual_outcome: str | None = None
+    status: str
+    duration_ms: float | None = None
+    notes: str = ""
+
+
+class FixProposalResponse(BaseSchema):
+    id: UUID
+    hypothesis_id: UUID
+    target_file: str
+    target_symbol: str | None = None
+    defect_explanation: str
+    diff_patch: str
+    expected_behavior: str
+    recommended_tests: list[str]
+    validation_status: str
+    validation_notes: list[str]
+    safety_considerations: list[str]
+    confidence: float
+
+
+class DebuggingAnalysisResponse(BaseSchema):
+    id: UUID
+    organization_id: UUID
+    status: str
+    title: str
+    exception_type: str
+    summary: str
+    started_at: datetime
+    completed_at: datetime | None = None
+    error_message: str | None = None
+    localized_frames_count: int
+    correlated_evidence_count: int
+    hypotheses_count: int
+    fix_proposals_count: int
+
+
+

@@ -1,0 +1,63 @@
+name: LogicFalcon Automated Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      base_ref:
+        description: "Base commit or branch to compare against"
+        required: false
+        default: "origin/main"
+
+permissions:
+  contents: read
+  pull-requests: write
+  security-events: write
+
+jobs:
+  logicfalcon-review:
+    name: LogicFalcon Intelligence & Code Review
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install LogicFalcon
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Run Review (Markdown Output)
+        id: review_markdown
+        run: |
+          BASE_REF="${{ github.event.pull_request.base.sha || github.event.inputs.base_ref || 'origin/main' }}"
+          echo "Running LogicFalcon Review against base: $BASE_REF"
+          logicfalcon review --base "$BASE_REF" --format markdown > review_report.md || true
+          cat review_report.md
+
+      - name: Run Review (SARIF Output)
+        run: |
+          BASE_REF="${{ github.event.pull_request.base.sha || github.event.inputs.base_ref || 'origin/main' }}"
+          logicfalcon review --base "$BASE_REF" --format sarif > logicfalcon.sarif || true
+
+      - name: Upload SARIF to GitHub Security Tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        continue-on-error: true
+        with:
+          sarif_file: logicfalcon.sarif
+          category: logicfalcon-review
+
+      - name: Enforce Quality Gate Threshold
+        run: |
+          BASE_REF="${{ github.event.pull_request.base.sha || github.event.inputs.base_ref || 'origin/main' }}"
+          logicfalcon review --base "$BASE_REF" --severity-threshold ERROR

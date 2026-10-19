@@ -8,7 +8,7 @@ async def test_health_endpoint(client: AsyncClient) -> None:
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "ok"
-    assert data["service"] == "AEGIS AI"
+    assert data["service"] in ["LogicFalcon (powered by AEGIS AI)", "AEGIS AI"]
     assert "version" in data
     # Ensure X-Request-ID and security headers are present
     assert "x-request-id" in response.headers
@@ -21,7 +21,7 @@ async def test_version_endpoint(client: AsyncClient) -> None:
     response = await client.get("/api/v1/version")
     assert response.status_code == 200
     data = response.json()
-    assert data["app_name"] == "AEGIS AI"
+    assert data["app_name"] in ["LogicFalcon (powered by AEGIS AI)", "AEGIS AI"]
     assert data["api_version"] == "v1"
     assert "environment" in data
 

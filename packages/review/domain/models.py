@@ -74,6 +74,28 @@ def generate_finding_fingerprint(
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
+SEVERITY_ORDER: dict[FindingSeverity, int] = {
+    FindingSeverity.INFO: 0,
+    FindingSeverity.WARNING: 1,
+    FindingSeverity.ERROR: 2,
+    FindingSeverity.CRITICAL: 3,
+}
+
+
+class ProposedFix(BaseModel):
+    """Structured code remediation proposal."""
+
+    id: UUID = Field(default_factory=uuid4)
+    finding_id: UUID | None = None
+    file_path: str
+    start_line: int
+    end_line: int
+    original_code: str = ""
+    replacement_code: str = ""
+    explanation: str = ""
+    diff_preview: str = ""
+
+
 class ReviewFinding(BaseModel):
     id: UUID = Field(default_factory=uuid4)
     review_id: UUID | None = None
@@ -85,6 +107,11 @@ class ReviewFinding(BaseModel):
     origin: FindingOrigin
     location: SourceLocation
     suggestion: str | None = None
+    proposed_fix: ProposedFix | None = None
+    why_it_matters: str = ""
+    references: list[str] = Field(default_factory=list)
+    related_diff_lines: list[int] = Field(default_factory=list)
+    is_uncertain: bool = False
     technical_evidence: str = ""
     validation_status: ValidationStatus = ValidationStatus.VALIDATED
     deduplication_hash: str = ""

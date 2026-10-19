@@ -1,6 +1,7 @@
 """Domain models for AEGIS AI Code Review."""
 
 from packages.review.domain.models import (
+    SEVERITY_ORDER,
     AffectedArtifacts,
     ChangedFile,
     ChangedSymbol,
@@ -10,6 +11,7 @@ from packages.review.domain.models import (
     FindingOrigin,
     FindingSeverity,
     GitDiffSummary,
+    ProposedFix,
     ReviewFinding,
     ReviewReport,
     ReviewSession,
@@ -21,6 +23,7 @@ from packages.review.domain.models import (
 )
 
 __all__ = [
+    "SEVERITY_ORDER",
     "AffectedArtifacts",
     "ChangedFile",
     "ChangedSymbol",
@@ -30,6 +33,7 @@ __all__ = [
     "FindingOrigin",
     "FindingSeverity",
     "GitDiffSummary",
+    "ProposedFix",
     "ReviewFinding",
     "ReviewReport",
     "ReviewSession",

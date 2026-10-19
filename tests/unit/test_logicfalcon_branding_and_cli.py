@@ -23,10 +23,10 @@ def test_logicfalcon_brand_metadata() -> None:
     assert __product__ == "LogicFalcon"
     assert __platform__ == "AEGIS AI"
     assert __tagline__ == "Fast, precise engineering intelligence."
-    assert __version__ == "0.1.0"
+    assert __version__ == "0.1.1"
     assert logicfalcon.__product__ == "LogicFalcon"
     assert logicfalcon.__platform__ == "AEGIS AI"
-    assert logicfalcon.__version__ == "0.1.0"
+    assert logicfalcon.__version__ == "0.1.1"
 
 
 def test_logicfalcon_public_api_exports() -> None:
@@ -37,13 +37,20 @@ def test_logicfalcon_public_api_exports() -> None:
     assert AutonomousDebuggingService is not None
     assert callable(run_cli)
     assert callable(build_parser)
+    assert callable(logicfalcon.review)
+    assert callable(logicfalcon.review_diff)
+    assert callable(logicfalcon.apply_fix)
+    assert callable(logicfalcon.verify_fix)
+    assert logicfalcon.ReviewFixEngine is not None
+    assert logicfalcon.FindingValidator is not None
+    assert logicfalcon.ProposedFix is not None
 
 
 def test_logicfalcon_cli_version_flag(capsys: pytest.CaptureFixture[str]) -> None:
     code = run_main(["--version"])
     assert code == 0
     captured = capsys.readouterr()
-    assert "LogicFalcon 0.1.0" in captured.out
+    assert "LogicFalcon 0.1.1" in captured.out
     assert "powered by AEGIS AI" in captured.out
 
 

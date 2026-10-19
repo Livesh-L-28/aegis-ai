@@ -1,5 +1,6 @@
 """Secure unified Git diff parser for AEGIS AI Code Review."""
 
+import contextlib
 import re
 
 from packages.review.domain.models import (
@@ -14,6 +15,18 @@ HUNK_HEADER_PATTERN = re.compile(
 )
 INDEX_PATTERN = re.compile(r"^index\s+([0-9a-fA-F]+)\.\.([0-9a-fA-F]+)")
 COMMIT_PATTERN = re.compile(r"^commit\s+([0-9a-fA-F]{7,40})")
+
+
+def _clean_git_path(raw: str) -> str:
+    """Cleans Git diff path prefixes and unquotes C-style escapes if present."""
+    p = raw.strip()
+    if p.startswith('"') and p.endswith('"') and len(p) >= 2:
+        p = p[1:-1]
+        with contextlib.suppress(Exception):
+            p = p.encode("utf-8").decode("unicode_escape")
+    if p.startswith("a/") or p.startswith("b/"):
+        p = p[2:]
+    return p
 
 
 class GitDiffParser:
@@ -68,12 +81,27 @@ class GitDiffParser:
                     files.append(current_file)
                     current_file = None
 
-                parts = line.split()
+                diff_rest = line.removeprefix("diff --git ").strip()
                 old_path = None
                 new_path = None
-                if len(parts) >= 4:
-                    old_path = parts[2].removeprefix("a/")
-                    new_path = parts[3].removeprefix("b/")
+
+                if diff_rest.startswith('"'):
+                    first_quote_end = diff_rest.find('"', 1)
+                    if first_quote_end != -1:
+                        old_part = diff_rest[1:first_quote_end]
+                        rem = diff_rest[first_quote_end + 1 :].strip()
+                        new_part = rem[1:-1] if rem.startswith('"') and rem.endswith('"') else rem
+                        old_path = _clean_git_path(old_part)
+                        new_path = _clean_git_path(new_part)
+                elif " b/" in diff_rest:
+                    split_idx = diff_rest.find(" b/")
+                    old_path = _clean_git_path(diff_rest[:split_idx])
+                    new_path = _clean_git_path(diff_rest[split_idx + 1 :])
+                else:
+                    parts = line.split()
+                    if len(parts) >= 4:
+                        old_path = _clean_git_path(parts[2])
+                        new_path = _clean_git_path(parts[3])
 
                 current_file = ChangedFile(
                     old_path=old_path,
@@ -108,13 +136,13 @@ class GitDiffParser:
 
                 if line.startswith("rename from "):
                     current_file.change_type = DiffChangeType.RENAMED
-                    current_file.old_path = line.removeprefix("rename from ").strip()
+                    current_file.old_path = _clean_git_path(line.removeprefix("rename from ").strip())
                     idx += 1
                     continue
 
                 if line.startswith("rename to "):
                     current_file.change_type = DiffChangeType.RENAMED
-                    current_file.new_path = line.removeprefix("rename to ").strip()
+                    current_file.new_path = _clean_git_path(line.removeprefix("rename to ").strip())
                     idx += 1
                     continue
 
@@ -135,10 +163,8 @@ class GitDiffParser:
                     if path_part == "/dev/null":
                         current_file.old_path = None
                         current_file.change_type = DiffChangeType.ADDED
-                    elif path_part.startswith("a/"):
-                        current_file.old_path = path_part[2:]
                     else:
-                        current_file.old_path = path_part
+                        current_file.old_path = _clean_git_path(path_part)
                     idx += 1
                     continue
 
@@ -147,10 +173,8 @@ class GitDiffParser:
                     if path_part == "/dev/null":
                         current_file.new_path = None
                         current_file.change_type = DiffChangeType.DELETED
-                    elif path_part.startswith("b/"):
-                        current_file.new_path = path_part[2:]
                     else:
-                        current_file.new_path = path_part
+                        current_file.new_path = _clean_git_path(path_part)
                     idx += 1
                     continue
 

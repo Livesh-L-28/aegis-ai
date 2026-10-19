@@ -1,6 +1,7 @@
 """Local code review engine orchestrating diff parsing, symbol mapping, static analysis, and AI review."""
 
 import asyncio
+import json
 import subprocess
 import time
 from collections.abc import Callable
@@ -75,6 +76,39 @@ class ReviewConfig(BaseModel):
             ".DS_Store",
         ]
     )
+
+    @classmethod
+    def load_config(cls, config_path: Path | str | None = None, repo_root: Path | str = ".") -> "ReviewConfig":
+        """Loads configuration from an explicit path or repository files (.logicfalcon.json, .logicfalcon.yml)."""
+        root = Path(repo_root).resolve()
+        candidate: Path | None = None
+
+        if config_path:
+            candidate = Path(config_path) if Path(config_path).is_absolute() else root / config_path
+            if not candidate.is_file():
+                logger.warning(f"Specified config file '{config_path}' not found; using default config.")
+                return cls()
+        else:
+            for name in (".logicfalcon.json", ".logicfalcon.yaml", ".logicfalcon.yml", ".aegis.yml", ".aegis.yaml"):
+                p = root / name
+                if p.is_file():
+                    candidate = p
+                    break
+
+        if candidate and candidate.is_file():
+            try:
+                raw_text = candidate.read_text(encoding="utf-8")
+                if candidate.suffix == ".json":
+                    data = json.loads(raw_text)
+                    return cls.model_validate(data)
+                elif candidate.suffix in (".yaml", ".yml"):
+                    import yaml
+                    data = yaml.safe_load(raw_text) or {}
+                    return cls.model_validate(data)
+            except Exception as e:
+                logger.warning(f"Failed to parse config file '{candidate}': {e}; using default config.")
+
+        return cls()
 
 
 class LocalReviewEngine:
@@ -247,11 +281,14 @@ class LocalReviewEngine:
 
         # Build dependency graph and discover affected tests
         try:
-            self.dependency_graph.build_graph(files=files_reviewed if files_reviewed else None)
-            affected_artifacts = self.dependency_graph.find_affected_artifacts(
-                changed_symbols=changed_symbols_all,
-                changed_files=changed_files_list,
-            )
+            if files_reviewed:
+                self.dependency_graph.build_graph(files=files_reviewed)
+                affected_artifacts = self.dependency_graph.find_affected_artifacts(
+                    changed_symbols=changed_symbols_all,
+                    changed_files=changed_files_list,
+                )
+            else:
+                affected_artifacts = AffectedArtifacts(changed_symbols=changed_symbols_all)
         except Exception as e:
             errors.append(f"Dependency graph analysis warning: {e}")
             affected_artifacts = AffectedArtifacts(
@@ -369,11 +406,29 @@ class LocalReviewEngine:
             timeout_seconds=timeout_seconds,
         )
 
-    def review_local_git_diff(self, base_ref: str | None = None) -> ReviewReport:
-        """Extracts local unified Git diff safely without shell=True and performs review."""
-        cmd = ["git", "diff"]
-        if base_ref:
+    def review_local_git_diff(
+        self,
+        base_ref: str | None = None,
+        staged: bool = False,
+        unstaged: bool = False,
+    ) -> ReviewReport:
+        """Extracts local unified Git diff safely without shell=True and performs review.
+
+        Supports:
+        - Staged changes (`staged=True` -> `git diff --cached`)
+        - Unstaged changes (`unstaged=True` -> `git diff`)
+        - Base branch or commit comparison (`base_ref` -> `git diff base_ref...HEAD` with fallback)
+        - Working tree changes (default: `git diff HEAD`, falling back to `git diff` for fresh repos)
+        """
+        cmd: list[str] = ["git", "diff"]
+        if staged:
+            cmd.append("--cached")
+        elif unstaged:
+            pass  # git diff default is unstaged
+        elif base_ref:
             cmd.extend([f"{base_ref}...HEAD"])
+        else:
+            cmd.append("HEAD")
 
         try:
             res = subprocess.run(
@@ -384,6 +439,40 @@ class LocalReviewEngine:
                 timeout=15.0,
             )
             raw_diff = res.stdout.decode("utf-8", errors="ignore")
+            # If base_ref...HEAD failed (e.g. no merge base or shallow clone), fallback to base_ref..HEAD
+            if res.returncode != 0 and base_ref:
+                fallback_cmd = ["git", "diff", f"{base_ref}..HEAD"]
+                fallback_res = subprocess.run(
+                    fallback_cmd,
+                    cwd=str(self.repo_root),
+                    capture_output=True,
+                    check=False,
+                    timeout=15.0,
+                )
+                if fallback_res.returncode == 0:
+                    raw_diff = fallback_res.stdout.decode("utf-8", errors="ignore")
+                else:
+                    err_msg = res.stderr.decode("utf-8", errors="ignore").strip()
+                    empty_summary = GitDiffSummary(
+                        warnings=[f"Git diff error comparing against '{base_ref}': {err_msg}"]
+                    )
+                    return ReviewReport(
+                        repository_path=str(self.repo_root),
+                        diff_summary=empty_summary,
+                        affected_artifacts=AffectedArtifacts(),
+                        errors=[f"Git comparison against '{base_ref}' failed: {err_msg}"],
+                    )
+            # If git diff HEAD failed (e.g. initial repository with no commits yet)
+            elif res.returncode != 0 and not base_ref and not staged and not unstaged:
+                unstaged_res = subprocess.run(
+                    ["git", "diff"],
+                    cwd=str(self.repo_root),
+                    capture_output=True,
+                    check=False,
+                    timeout=15.0,
+                )
+                if unstaged_res.returncode == 0:
+                    raw_diff = unstaged_res.stdout.decode("utf-8", errors="ignore")
         except (subprocess.TimeoutExpired, OSError) as e:
             empty_summary = GitDiffSummary(warnings=[f"Failed to generate git diff: {e}"])
             return ReviewReport(

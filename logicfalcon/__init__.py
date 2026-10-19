@@ -20,25 +20,51 @@ except (ImportError, ModuleNotFoundError):
                 "It is not available in the standalone LogicFalcon CLI/SDK distribution."
             )
 
+from logicfalcon.sdk import apply_fix, review, review_diff, verify_fix
 from packages.review.cli import build_parser, run_cli
-from packages.review.domain.models import FindingSeverity, ReviewReport
+from packages.review.domain.models import (
+    FindingCategory,
+    FindingSeverity,
+    ProposedFix,
+    ReviewFinding,
+    ReviewReport,
+    ValidationStatus,
+)
 from packages.review.engine import LocalReviewEngine, ReviewConfig
+from packages.review.fix_engine import (
+    FixApplicationResult,
+    RemediationVerificationResult,
+    ReviewFixEngine,
+)
+from packages.review.validator import FindingValidator
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __product__ = "LogicFalcon"
 __tagline__ = "Fast, precise engineering intelligence."
 __platform__ = "AEGIS AI"
 
 __all__ = [
     "AutonomousDebuggingService",
+    "FindingCategory",
     "FindingSeverity",
+    "FindingValidator",
+    "FixApplicationResult",
     "LocalReviewEngine",
+    "ProposedFix",
+    "RemediationVerificationResult",
     "ReviewConfig",
+    "ReviewFinding",
+    "ReviewFixEngine",
     "ReviewReport",
+    "ValidationStatus",
     "__platform__",
     "__product__",
     "__tagline__",
     "__version__",
+    "apply_fix",
     "build_parser",
+    "review",
+    "review_diff",
     "run_cli",
+    "verify_fix",
 ]

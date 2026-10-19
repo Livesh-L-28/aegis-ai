@@ -22,7 +22,7 @@ from packages.review.cli import build_parser, run_cli
 from packages.review.domain.models import FindingSeverity, ReviewReport
 from packages.review.engine import LocalReviewEngine, ReviewConfig
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 __all__ = [
     "AutonomousDebuggingService",

@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import JSON, DateTime, ForeignKey, String, Text, func
+from sqlalchemy import JSON, DateTime, ForeignKey, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from apps.api.app.db.base import GUID, Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -26,6 +26,9 @@ class Organization(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
     audit_events: Mapped[list["AuditEvent"]] = relationship(
         "AuditEvent", back_populates="organization", cascade="all, delete-orphan"
+    )
+    repositories: Mapped[list["RepositoryEntity"]] = relationship(
+        "RepositoryEntity", back_populates="organization", cascade="all, delete-orphan"
     )
 
 
@@ -97,6 +100,9 @@ class Project(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     organization: Mapped["Organization"] = relationship("Organization", back_populates="projects")
     environments: Mapped[list["Environment"]] = relationship(
         "Environment", back_populates="project", cascade="all, delete-orphan"
+    )
+    repositories: Mapped[list["RepositoryEntity"]] = relationship(
+        "RepositoryEntity", back_populates="project", cascade="all, delete-orphan"
     )
 
 
@@ -551,6 +557,18 @@ class ReviewSessionEntity(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         nullable=True,
         index=True,
     )
+    repository_id: Mapped[UUID | None] = mapped_column(
+        GUID,
+        ForeignKey("repositories.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    revision_id: Mapped[UUID | None] = mapped_column(
+        GUID,
+        ForeignKey("repository_revisions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     repository_name: Mapped[str] = mapped_column(String(255), nullable=False)
     review_type: Mapped[str] = mapped_column(String(50), nullable=False, default="LOCAL")
     base_commit: Mapped[str | None] = mapped_column(String(40), nullable=True)
@@ -585,6 +603,12 @@ class ReviewFindingEntity(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         nullable=False,
         index=True,
     )
+    evidence_record_id: Mapped[UUID | None] = mapped_column(
+        GUID,
+        ForeignKey("engineering_evidence_records.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     file_path: Mapped[str] = mapped_column(String(1024), nullable=False)
     start_line: Mapped[int] = mapped_column(nullable=False)
     end_line: Mapped[int] = mapped_column(nullable=False)
@@ -605,3 +629,220 @@ class ReviewFindingEntity(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         "ReviewSessionEntity",
         back_populates="findings",
     )
+    evidence_record: Mapped["EngineeringEvidenceRecordEntity | None"] = relationship(
+        "EngineeringEvidenceRecordEntity"
+    )
+
+
+# --- Engineering Evidence Graph Entities ---
+class RepositoryEntity(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    __tablename__ = "repositories"
+    __table_args__ = (
+        UniqueConstraint("project_id", "slug", name="uq_repositories_project_slug"),
+    )
+
+    organization_id: Mapped[UUID] = mapped_column(
+        GUID,
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    project_id: Mapped[UUID] = mapped_column(
+        GUID,
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    slug: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    default_branch: Mapped[str] = mapped_column(String(100), nullable=False, default="main")
+    repo_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    # Relationships
+    organization: Mapped["Organization"] = relationship("Organization", back_populates="repositories")
+    project: Mapped["Project"] = relationship("Project", back_populates="repositories")
+    revisions: Mapped[list["RevisionEntity"]] = relationship(
+        "RevisionEntity", back_populates="repository", cascade="all, delete-orphan"
+    )
+    evidence_records: Mapped[list["EngineeringEvidenceRecordEntity"]] = relationship(
+        "EngineeringEvidenceRecordEntity", back_populates="repository", cascade="all, delete-orphan"
+    )
+
+
+class RevisionEntity(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    __tablename__ = "repository_revisions"
+    __table_args__ = (
+        UniqueConstraint("repository_id", "commit_sha", name="uq_revisions_repo_commit"),
+    )
+
+    organization_id: Mapped[UUID] = mapped_column(
+        GUID,
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    repository_id: Mapped[UUID] = mapped_column(
+        GUID,
+        ForeignKey("repositories.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    commit_sha: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    parent_shas: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    author: Mapped[str] = mapped_column(String(255), nullable=False, default="unknown")
+    committed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    commit_message: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+    # Relationships
+    repository: Mapped["RepositoryEntity"] = relationship("RepositoryEntity", back_populates="revisions")
+    source_files: Mapped[list["SourceFileNodeEntity"]] = relationship(
+        "SourceFileNodeEntity", back_populates="revision", cascade="all, delete-orphan"
+    )
+    dependency_edges: Mapped[list["CodeDependencyEdgeEntity"]] = relationship(
+        "CodeDependencyEdgeEntity", back_populates="revision", cascade="all, delete-orphan"
+    )
+    evidence_records: Mapped[list["EngineeringEvidenceRecordEntity"]] = relationship(
+        "EngineeringEvidenceRecordEntity", back_populates="revision", cascade="all, delete-orphan"
+    )
+
+
+class SourceFileNodeEntity(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    __tablename__ = "source_file_nodes"
+    __table_args__ = (
+        UniqueConstraint("revision_id", "file_path", name="uq_source_files_revision_path"),
+    )
+
+    organization_id: Mapped[UUID] = mapped_column(
+        GUID,
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    repository_id: Mapped[UUID] = mapped_column(
+        GUID,
+        ForeignKey("repositories.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    revision_id: Mapped[UUID] = mapped_column(
+        GUID,
+        ForeignKey("repository_revisions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    file_path: Mapped[str] = mapped_column(String(1024), nullable=False, index=True)
+    classification: Mapped[str] = mapped_column(String(50), nullable=False, default="SOURCE")
+    language: Mapped[str] = mapped_column(String(50), nullable=False, default="python")
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    size_bytes: Mapped[int] = mapped_column(default=0, nullable=False)
+
+    # Relationships
+    revision: Mapped["RevisionEntity"] = relationship("RevisionEntity", back_populates="source_files")
+    symbols: Mapped[list["CodeSymbolNodeEntity"]] = relationship(
+        "CodeSymbolNodeEntity", back_populates="file_node", cascade="all, delete-orphan"
+    )
+
+
+class CodeSymbolNodeEntity(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    __tablename__ = "code_symbol_nodes"
+
+    organization_id: Mapped[UUID] = mapped_column(
+        GUID,
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    file_node_id: Mapped[UUID] = mapped_column(
+        GUID,
+        ForeignKey("source_file_nodes.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    qualified_name: Mapped[str] = mapped_column(String(500), nullable=False, index=True)
+    symbol_type: Mapped[str] = mapped_column(String(50), nullable=False, default="FUNCTION")
+    start_line: Mapped[int] = mapped_column(nullable=False)
+    end_line: Mapped[int] = mapped_column(nullable=False)
+    signature: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    docstring_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    embedding: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+
+    # Relationships
+    file_node: Mapped["SourceFileNodeEntity"] = relationship("SourceFileNodeEntity", back_populates="symbols")
+
+
+class CodeDependencyEdgeEntity(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    __tablename__ = "code_dependency_edges"
+
+    organization_id: Mapped[UUID] = mapped_column(
+        GUID,
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    repository_id: Mapped[UUID] = mapped_column(
+        GUID,
+        ForeignKey("repositories.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    revision_id: Mapped[UUID] = mapped_column(
+        GUID,
+        ForeignKey("repository_revisions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    source_file_path: Mapped[str] = mapped_column(String(1024), nullable=False, index=True)
+    target_module: Mapped[str] = mapped_column(String(500), nullable=False, index=True)
+    imported_symbols: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    edge_type: Mapped[str] = mapped_column(String(50), nullable=False, default="IMPORT")
+    source_symbol: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    target_symbol: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # Relationships
+    revision: Mapped["RevisionEntity"] = relationship("RevisionEntity", back_populates="dependency_edges")
+
+
+class EngineeringEvidenceRecordEntity(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    __tablename__ = "engineering_evidence_records"
+
+    organization_id: Mapped[UUID] = mapped_column(
+        GUID,
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    repository_id: Mapped[UUID | None] = mapped_column(
+        GUID,
+        ForeignKey("repositories.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    revision_id: Mapped[UUID | None] = mapped_column(
+        GUID,
+        ForeignKey("repository_revisions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    evidence_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    provenance_source: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    file_path: Mapped[str | None] = mapped_column(String(1024), nullable=True, index=True)
+    start_line: Mapped[int | None] = mapped_column(nullable=True)
+    end_line: Mapped[int | None] = mapped_column(nullable=True)
+    symbol_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    structured_payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    confidence: Mapped[float] = mapped_column(default=1.0, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    validation_status: Mapped[str] = mapped_column(String(50), nullable=False, default="UNVERIFIED")
+
+    # Relationships
+    repository: Mapped["RepositoryEntity | None"] = relationship(
+        "RepositoryEntity", back_populates="evidence_records"
+    )
+    revision: Mapped["RevisionEntity | None"] = relationship(
+        "RevisionEntity", back_populates="evidence_records"
+    )
+

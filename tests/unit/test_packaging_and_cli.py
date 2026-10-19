@@ -17,8 +17,8 @@ from aegis.cli import build_root_parser, run_doctor, run_main
 
 
 def test_aegis_public_api_exports() -> None:
-    assert __version__ == "0.1.0"
-    assert aegis.__version__ == "0.1.0"
+    assert __version__ == "0.1.1"
+    assert aegis.__version__ == "0.1.1"
     assert LocalReviewEngine is not None
     assert ReviewConfig is not None
     assert ReviewReport is not None
@@ -33,7 +33,7 @@ def test_cli_version_flag(capsys: pytest.CaptureFixture[str]) -> None:
     assert code == 0
     captured = capsys.readouterr()
     assert "aegis" in captured.out.lower()
-    assert "0.1.0" in captured.out
+    assert "0.1.1" in captured.out
 
 
 def test_cli_help_flag(capsys: pytest.CaptureFixture[str]) -> None:

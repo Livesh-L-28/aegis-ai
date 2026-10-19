@@ -47,7 +47,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_application() -> FastAPI:
     app = FastAPI(
-        title=settings.APP_NAME,
+        title="LogicFalcon API (Powered by AEGIS AI)",
+        description="LogicFalcon is an AI-powered software engineering intelligence platform for evidence-grounded code review, repository analysis, change-impact assessment, root-cause analysis, and safe fix proposals. Powered by AEGIS AI.",
         version=settings.APP_VERSION,
         lifespan=lifespan,
         docs_url="/docs" if settings.ENVIRONMENT != "production" else None,

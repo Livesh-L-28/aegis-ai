@@ -91,7 +91,7 @@ def run_main(args: list[str] | None = None) -> int:
     argv = sys.argv[1:] if args is None else args
 
     # Handle direct review fallback when arguments start with review flags
-    if argv and argv[0] in ("--repo", "--base", "--format", "--severity-threshold", "--changed-only", "--enable-ai", "--enable-tools", "--timeout"):
+    if argv and argv[0].startswith("-") and argv[0] not in ("-v", "--version", "-h", "--help"):
         return run_review_cli(argv)
 
     if not argv:

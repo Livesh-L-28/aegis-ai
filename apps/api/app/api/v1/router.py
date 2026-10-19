@@ -4,7 +4,9 @@ from apps.api.app.api.v1.endpoints import (
     ai,
     audit,
     autonomy,
+    debugging,
     events,
+    evidence_graph,
     health,
     intelligence,
     investigations,
@@ -18,6 +20,7 @@ from apps.api.app.api.v1.endpoints import (
 )
 
 v1_router = APIRouter()
+
 
 # Client Onboarding (1-Click Connect)
 v1_router.include_router(onboarding.router)
@@ -52,3 +55,11 @@ v1_router.include_router(autonomy.router)
 
 # Repository Intelligence & AI Code Review Endpoints
 v1_router.include_router(review.router)
+
+# Engineering Evidence Graph Endpoints
+v1_router.include_router(evidence_graph.router)
+
+# Autonomous Debugging Endpoints
+v1_router.include_router(debugging.router)
+
+

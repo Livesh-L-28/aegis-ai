@@ -9,6 +9,7 @@ from packages.review.domain.models import (
     FindingCategory,
     FindingOrigin,
     FindingSeverity,
+    ProposedFix,
     ReviewFinding,
     SourceLocation,
 )
@@ -22,6 +23,85 @@ class _ASTVisitor(ast.NodeVisitor):
     def __init__(self, file_path: str) -> None:
         self.file_path = file_path
         self.findings: list[ReviewFinding] = []
+        self._with_context_depth = 0
+
+    def visit_With(self, node: ast.With) -> None:
+        self._with_context_depth += 1
+        self.generic_visit(node)
+        self._with_context_depth -= 1
+
+    def visit_AsyncWith(self, node: ast.AsyncWith) -> None:
+        self._with_context_depth += 1
+        self.generic_visit(node)
+        self._with_context_depth -= 1
+
+    def _check_function_defaults(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        for default in node.args.defaults + node.args.kw_defaults:
+            if default is not None and isinstance(default, (ast.List, ast.Dict, ast.Set)):
+                kind = "list" if isinstance(default, ast.List) else "dict" if isinstance(default, ast.Dict) else "set"
+                self.findings.append(
+                    ReviewFinding(
+                        rule_id="QUAL-002",
+                        title="Mutable Default Argument",
+                        message=f"Function '{node.name}' uses a mutable {kind} as default argument.",
+                        severity=FindingSeverity.WARNING,
+                        category=FindingCategory.QUALITY,
+                        origin=FindingOrigin.STATIC_ANALYSIS,
+                        location=SourceLocation(
+                            file_path=self.file_path,
+                            start_line=default.lineno,
+                            end_line=default.end_lineno or default.lineno,
+                            symbol_name=node.name,
+                        ),
+                        suggestion=f"Use 'None' as default value and initialize new {kind} in the function body.",
+                        why_it_matters="Python shares default argument instances across calls, leading to state leakage.",
+                        proposed_fix=ProposedFix(
+                            file_path=self.file_path,
+                            start_line=default.lineno,
+                            end_line=default.end_lineno or default.lineno,
+                            replacement_code="None",
+                            explanation=f"Replace mutable {kind} default with None and initialize inside the function.",
+                        ),
+                        tool_name="ast_security",
+                        confidence=1.0,
+                    )
+                )
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self._check_function_defaults(node)
+        self.generic_visit(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self._check_function_defaults(node)
+        self.generic_visit(node)
+
+    def visit_Compare(self, node: ast.Compare) -> None:
+        for op, comp in zip(node.ops, node.comparators, strict=False):
+            if (
+                isinstance(op, (ast.Eq, ast.NotEq, ast.Is, ast.IsNot))
+                and ast.dump(node.left) == ast.dump(comp)
+                and not isinstance(node.left, ast.Constant)
+            ):
+                self.findings.append(
+                        ReviewFinding(
+                            rule_id="QUAL-003",
+                            title="Useless Self-Comparison",
+                            message="Comparison of identical expression against itself is always constant.",
+                            severity=FindingSeverity.WARNING,
+                            category=FindingCategory.QUALITY,
+                            origin=FindingOrigin.STATIC_ANALYSIS,
+                            location=SourceLocation(
+                                file_path=self.file_path,
+                                start_line=node.lineno,
+                                end_line=node.end_lineno or node.lineno,
+                            ),
+                            suggestion="Check if one operand was intended to reference another variable.",
+                            why_it_matters="Self-comparisons (x == x) usually indicate a copy-paste mistake.",
+                            tool_name="ast_security",
+                            confidence=1.0,
+                        )
+                    )
+        self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> None:
         # SEC-001: eval() or exec() usage
@@ -43,6 +123,7 @@ class _ASTVisitor(ast.NodeVisitor):
                         symbol_name=node.func.id,
                     ),
                     suggestion="Refactor to use safe deterministic parsers or structured mappings.",
+                    why_it_matters="Dynamic evaluation can allow arbitrary code execution when untrusted data is evaluated.",
                     tool_name="ast_security",
                     confidence=1.0,
                 )
@@ -75,12 +156,19 @@ class _ASTVisitor(ast.NodeVisitor):
                                 end_column=node.end_col_offset,
                             ),
                             suggestion="Pass arguments as an explicit list and set shell=False.",
+                            why_it_matters="Command strings passed to shell=True can be manipulated to run arbitrary shell commands.",
+                            proposed_fix=ProposedFix(
+                                file_path=self.file_path,
+                                start_line=node.lineno,
+                                end_line=node.end_lineno or node.lineno,
+                                explanation="Pass command as a list of arguments and set shell=False.",
+                            ),
                             tool_name="ast_security",
                             confidence=0.95,
                         )
                     )
 
-        # SEC-004: insecure deserialization (pickle.loads, yaml.load without Loader)
+        # SEC-004: insecure deserialization (pickle.loads, pickle.load)
         if (
             isinstance(node.func, ast.Attribute)
             and node.func.attr in ("loads", "load")
@@ -103,8 +191,109 @@ class _ASTVisitor(ast.NodeVisitor):
                         end_column=node.end_col_offset,
                     ),
                     suggestion="Use safe serialization formats like JSON, MessagePack, or Pydantic.",
+                    why_it_matters="Pickle bytecode can construct arbitrary objects and execute arbitrary code on unpickling.",
                     tool_name="ast_security",
                     confidence=0.95,
+                )
+            )
+
+        # SEC-006: tempfile.mktemp()
+        if (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr == "mktemp"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "tempfile"
+        ):
+            self.findings.append(
+                ReviewFinding(
+                    rule_id="SEC-006",
+                    title="Insecure Temporary File Creation",
+                    message="tempfile.mktemp() is deprecated and vulnerable to symlink race conditions (TOCTOU).",
+                    severity=FindingSeverity.ERROR,
+                    category=FindingCategory.SECURITY,
+                    origin=FindingOrigin.SECURITY_HEURISTIC,
+                    location=SourceLocation(
+                        file_path=self.file_path,
+                        start_line=node.lineno,
+                        end_line=node.end_lineno or node.lineno,
+                        symbol_name="mktemp",
+                    ),
+                    suggestion="Use tempfile.NamedTemporaryFile() or tempfile.TemporaryDirectory() instead.",
+                    why_it_matters="An attacker can create a symlink with the generated filename before the application opens it.",
+                    tool_name="ast_security",
+                    confidence=1.0,
+                )
+            )
+
+        # SEC-007: SQL query dynamic string interpolation
+        if (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr in ("execute", "executemany")
+            and node.args
+        ):
+            first_arg = node.args[0]
+            is_dynamic_sql = False
+            if isinstance(first_arg, ast.JoinedStr):
+                raw_parts = [p.value for p in first_arg.values if isinstance(p, ast.Constant) and isinstance(p.value, str)]
+                sql_preview = " ".join(raw_parts).upper()
+                if any(kw in sql_preview for kw in ("SELECT", "INSERT", "UPDATE", "DELETE", "DROP", "ALTER")):
+                    is_dynamic_sql = True
+            elif (
+                isinstance(first_arg, ast.BinOp)
+                and isinstance(first_arg.op, ast.Mod)
+                and isinstance(first_arg.left, ast.Constant)
+                and isinstance(first_arg.left.value, str)
+                and any(kw in first_arg.left.value.upper() for kw in ("SELECT", "INSERT", "UPDATE", "DELETE"))
+            ):
+                is_dynamic_sql = True
+
+            if is_dynamic_sql:
+                self.findings.append(
+                    ReviewFinding(
+                        rule_id="SEC-007",
+                        title="Potential SQL Injection via Dynamic String Formatting",
+                        message="SQL query executed with unparameterized dynamic string interpolation.",
+                        severity=FindingSeverity.CRITICAL,
+                        category=FindingCategory.SECURITY,
+                        origin=FindingOrigin.SECURITY_HEURISTIC,
+                        location=SourceLocation(
+                            file_path=self.file_path,
+                            start_line=first_arg.lineno,
+                            end_line=first_arg.end_lineno or first_arg.lineno,
+                        ),
+                        suggestion="Use parameterized query placeholders and pass parameters as an explicit sequence or dict.",
+                        why_it_matters="String formatting allows attackers to inject arbitrary SQL statements.",
+                        tool_name="ast_security",
+                        confidence=0.95,
+                    )
+                )
+
+        # QUAL-006: open() outside of with context
+        if isinstance(node.func, ast.Name) and node.func.id == "open" and self._with_context_depth == 0:
+            self.findings.append(
+                ReviewFinding(
+                    rule_id="QUAL-006",
+                    title="Unmanaged File Resource (Missing Context Manager)",
+                    message="File opened without 'with' statement context manager risks resource leaks.",
+                    severity=FindingSeverity.WARNING,
+                    category=FindingCategory.RELIABILITY,
+                    origin=FindingOrigin.STATIC_ANALYSIS,
+                    location=SourceLocation(
+                        file_path=self.file_path,
+                        start_line=node.lineno,
+                        end_line=node.end_lineno or node.lineno,
+                        symbol_name="open",
+                    ),
+                    suggestion="Use 'with open(...) as f:' to ensure the file descriptor is closed.",
+                    why_it_matters="Unclosed file handles remain open until garbage collection, risking descriptor exhaustion.",
+                    proposed_fix=ProposedFix(
+                        file_path=self.file_path,
+                        start_line=node.lineno,
+                        end_line=node.end_lineno or node.lineno,
+                        explanation="Wrap file access in a 'with' context manager to guarantee automatic resource cleanup.",
+                    ),
+                    tool_name="ast_security",
+                    confidence=0.9,
                 )
             )
 
@@ -131,6 +320,13 @@ class _ASTVisitor(ast.NodeVisitor):
                         end_column=node.end_col_offset,
                     ),
                     suggestion="Catch specific exceptions or log the error before suppressing.",
+                    why_it_matters="Suppressing all exceptions hides bugs, interrupts, and crashes.",
+                    proposed_fix=ProposedFix(
+                        file_path=self.file_path,
+                        start_line=node.lineno,
+                        end_line=node.end_lineno or node.lineno,
+                        explanation="Catch specific exception types and log or handle the error gracefully.",
+                    ),
                     tool_name="ast_security",
                     confidence=1.0,
                 )
