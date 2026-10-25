@@ -20,14 +20,48 @@ except (ImportError, ModuleNotFoundError):
                 "It is not available in the standalone LogicFalcon CLI/SDK distribution."
             )
 
-from logicfalcon.sdk import apply_fix, review, review_diff, verify_fix
+from logicfalcon.sdk import (
+    analyze_architecture,
+    analyze_impact,
+    analyze_impact_with_review,
+    analyze_trends,
+    analyze_unified,
+    apply_fix,
+    capture_snapshot,
+    compare_snapshots,
+    estimate_debt,
+    evaluate_history_policy,
+    list_snapshots,
+    reverse_engineer,
+    reverse_engineer_with_review,
+    review,
+    review_diff,
+    review_file,
+    review_workspace,
+    verify_fix,
+)
+from packages.review.adapters.base import (
+    AnalyzerRegistry,
+    StaticAnalysisAdapter,
+    global_analyzer_registry,
+)
+from packages.review.analyzer.architecture import ArchitectureAnalyzer
 from packages.review.cli import build_parser, run_cli
 from packages.review.domain.models import (
+    ArchitecturePolicy,
+    ArchitectureReport,
+    BoundaryRule,
+    BoundaryViolation,
+    CycleGroup,
+    DependencyCycle,
     FindingCategory,
     FindingSeverity,
+    LayerDefinition,
+    ModuleMetric,
     ProposedFix,
     ReviewFinding,
     ReviewReport,
+    RuleException,
     ValidationStatus,
 )
 from packages.review.engine import LocalReviewEngine, ReviewConfig
@@ -36,35 +70,137 @@ from packages.review.fix_engine import (
     RemediationVerificationResult,
     ReviewFixEngine,
 )
+from packages.review.history.engine import HistoricalIntelligenceEngine
+from packages.review.history.models import (
+    EngineeringTrendReport,
+    FindingLifecycleState,
+    PolicyEvaluationResult,
+    PolicyMode,
+    PolicyRule,
+    RepositoryMetrics,
+    RepositorySnapshot,
+    SnapshotComparison,
+    SnapshotFinding,
+    SnapshotMetadata,
+    SnapshotSummary,
+    TechnicalDebtEstimate,
+    TrendDirection,
+)
+from packages.review.history.policy import EngineeringPolicyEvaluator
+from packages.review.history.report_generator import HistoryReportGenerator
+from packages.review.history.storage import HistoryStorage
+from packages.review.impact.engine import ChangeImpactEngine
+from packages.review.impact.models import (
+    ChangeImpactReport,
+    ChangeSet,
+    ImpactedEntity,
+    ImpactRiskLevel,
+    ImpactType,
+    TestImpactCandidate,
+)
+from packages.review.reverse_engineering.engine import ReverseEngineeringEngine
+from packages.review.reverse_engineering.models import ReverseEngineeringReport
+from packages.review.unified.engine import UnifiedIntelligenceEngine
+from packages.review.unified.models import (
+    RecommendationCategory,
+    RecommendationPriority,
+    UnifiedIntelligenceReport,
+    UnifiedRecommendation,
+)
+from packages.review.unified.recommendations import RecommendationSynthesizer
+from packages.review.unified.report_generator import UnifiedReportGenerator
 from packages.review.validator import FindingValidator
 
-__version__ = "0.1.1"
+__version__ = "0.1.3"
 __product__ = "LogicFalcon"
 __tagline__ = "Fast, precise engineering intelligence."
 __platform__ = "AEGIS AI"
 
 __all__ = [
+    "AnalyzerRegistry",
+    "ArchitectureAnalyzer",
+    "ArchitecturePolicy",
+    "ArchitectureReport",
     "AutonomousDebuggingService",
+    "BoundaryRule",
+    "BoundaryViolation",
+    "ChangeImpactEngine",
+    "ChangeImpactReport",
+    "ChangeSet",
+    "CycleGroup",
+    "DependencyCycle",
+    "EngineeringPolicyEvaluator",
+    "EngineeringTrendReport",
     "FindingCategory",
+    "FindingLifecycleState",
     "FindingSeverity",
     "FindingValidator",
     "FixApplicationResult",
+    "HistoricalIntelligenceEngine",
+    "HistoryReportGenerator",
+    "HistoryStorage",
+    "ImpactRiskLevel",
+    "ImpactType",
+    "ImpactedEntity",
+    "LayerDefinition",
     "LocalReviewEngine",
+    "ModuleMetric",
+    "PolicyEvaluationResult",
+    "PolicyMode",
+    "PolicyRule",
     "ProposedFix",
+    "RecommendationCategory",
+    "RecommendationPriority",
+    "RecommendationSynthesizer",
     "RemediationVerificationResult",
+    "RepositoryMetrics",
+    "RepositorySnapshot",
+    "ReverseEngineeringEngine",
+    "ReverseEngineeringReport",
     "ReviewConfig",
     "ReviewFinding",
     "ReviewFixEngine",
     "ReviewReport",
+    "RuleException",
+    "SnapshotComparison",
+    "SnapshotFinding",
+    "SnapshotMetadata",
+    "SnapshotSummary",
+    "StaticAnalysisAdapter",
+    "TechnicalDebtEstimate",
+    "TestImpactCandidate",
+    "TrendDirection",
+    "UnifiedIntelligenceEngine",
+    "UnifiedIntelligenceReport",
+    "UnifiedRecommendation",
+    "UnifiedReportGenerator",
     "ValidationStatus",
     "__platform__",
     "__product__",
     "__tagline__",
     "__version__",
+    "analyze_architecture",
+    "analyze_impact",
+    "analyze_impact_with_review",
+    "analyze_trends",
+    "analyze_unified",
     "apply_fix",
     "build_parser",
+    "capture_snapshot",
+    "compare_snapshots",
+    "estimate_debt",
+    "evaluate_history_policy",
+    "global_analyzer_registry",
+    "list_snapshots",
+    "reverse_engineer",
+    "reverse_engineer_with_review",
     "review",
     "review_diff",
+    "review_file",
+    "review_workspace",
     "run_cli",
     "verify_fix",
 ]
+
+
+

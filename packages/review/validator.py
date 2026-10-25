@@ -48,10 +48,12 @@ class FindingValidator:
         findings: list[ReviewFinding],
         repo_root: Path | None = None,
         diff_summary: GitDiffSummary | None = None,
+        override_contents: dict[str, str] | None = None,
     ) -> tuple[list[ReviewFinding], ValidationStats]:
         """Validates, filters, and deduplicates a collection of findings."""
         root = (repo_root.resolve() if repo_root else self.repo_root) or Path.cwd().resolve()
         stats = ValidationStats(total_inspected=len(findings))
+        overrides = override_contents or {}
 
         # 1. Deduplicate findings while preserving the highest confidence finding
         deduped_map: dict[str, ReviewFinding] = {}
@@ -93,8 +95,9 @@ class FindingValidator:
                     verified_findings.append(finding)
                 continue
 
-            # Check 2: File exists on disk or in diff
-            file_exists = resolved_file.is_file()
+            # Check 2: File exists on disk or in diff or in override contents
+            has_override = file_path in overrides or str(resolved_file) in overrides
+            file_exists = resolved_file.is_file() or has_override
             in_diff = file_path in diff_lines_map
 
             if not file_exists and not in_diff:
@@ -108,7 +111,10 @@ class FindingValidator:
             # Check 3: Line bounds verification
             if file_exists:
                 try:
-                    file_text = resolved_file.read_text(encoding="utf-8", errors="ignore")
+                    if has_override:
+                        file_text = overrides.get(file_path, overrides.get(str(resolved_file), ""))
+                    else:
+                        file_text = resolved_file.read_text(encoding="utf-8", errors="ignore")
                     file_lines = file_text.splitlines()
                     total_lines = len(file_lines)
 
@@ -131,13 +137,25 @@ class FindingValidator:
 
                         # If technical evidence looks like an exact code snippet, test if present
                         ev_first_line = evidence.splitlines()[0].strip() if evidence else ""
-                        if len(ev_first_line) > 5 and ev_first_line not in context_snippet and ev_first_line not in file_text:
-                            finding.validation_status = ValidationStatus.REJECTED_CONTRADICTED
-                            finding.is_uncertain = True
-                            stats.rejected_contradicted += 1
-                            if not self.reject_ungrounded:
-                                verified_findings.append(finding)
-                            continue
+                        if len(ev_first_line) > 5:
+                            is_grounded = ev_first_line in context_snippet or ev_first_line in file_text
+                            if not is_grounded and "[REDACTED_SECRET]" in ev_first_line:
+                                from packages.review.adapters.ast_security import (
+                                    redact_secrets_in_text,
+                                )
+
+                                is_grounded = (
+                                    ev_first_line in redact_secrets_in_text(context_snippet)
+                                    or ev_first_line in redact_secrets_in_text(file_text)
+                                )
+
+                            if not is_grounded:
+                                finding.validation_status = ValidationStatus.REJECTED_CONTRADICTED
+                                finding.is_uncertain = True
+                                stats.rejected_contradicted += 1
+                                if not self.reject_ungrounded:
+                                    verified_findings.append(finding)
+                                continue
 
                 except Exception as e:
                     logger.debug(f"File reading error during validation of {file_path}: {e}")

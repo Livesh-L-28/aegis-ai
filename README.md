@@ -19,28 +19,112 @@ pip install logicfalcon
 # Verify environment and AST analyzer capabilities
 logicfalcon doctor
 
-# Run deterministic code review on local git diff
-logicfalcon review --repo .
+# Run deterministic code review on local git diff (optionally enriched with architecture context)
+logicfalcon review --repo . --with-re-context
 
-# Machine-readable JSON output for CI pipelines
-logicfalcon review --repo . --format json --severity-threshold ERROR
+# Machine-readable JSON or SARIF v2.1.0 output for CI pipelines with baseline suppression
+logicfalcon review --repo . --format sarif --severity-threshold HIGH --baseline .logicfalcon-baseline.json
+
+# Analyze repository architecture (cycles, coupling instability, boundary violations)
+logicfalcon architecture --repo . --format text --max-cycles 10
+
+# Reverse engineer repository inventory, APIs, data models, call graphs, and run integrated review
+logicfalcon reverse-engineer --repo . --format markdown --with-review --max-depth 15 --output-file REVERSE_ENGINEERING.md
+
+# Change impact analysis & predictive test selection on working tree or git revisions
+logicfalcon impact --repo . --unstaged --format markdown --output-file IMPACT.md
+
+# CI change impact gate: fail if risk score reaches HIGH or CRITICAL
+logicfalcon impact --repo . --base origin/main --target HEAD --format json --fail-on-risk HIGH
+
+# Continuous engineering intelligence & historical health tracking
+logicfalcon history snapshot --repo .
+logicfalcon history list
+logicfalcon history compare --repo .
+logicfalcon history trends --repo . --last 10
+logicfalcon history debt --repo .
+logicfalcon history policy --repo . --config .logicfalcon-policy.json
+logicfalcon history prune --keep-last 20
+
+# Launch stdio Model Context Protocol (MCP) server for AI coding agents
+logicfalcon mcp
 ```
 
 ### 3. Python SDK Usage
 
 ```python
 from pathlib import Path
-from logicfalcon import LocalReviewEngine, ReviewConfig
+from logicfalcon import (
+    LocalReviewEngine,
+    ReviewConfig,
+    analyze_architecture,
+    reverse_engineer,
+    reverse_engineer_with_review,
+    analyze_impact,
+    analyze_impact_with_review,
+    capture_snapshot,
+    compare_snapshots,
+    analyze_trends,
+    estimate_debt,
+    evaluate_history_policy,
+)
 
+# 1. Deterministic Code Review with Architecture Context
 config = ReviewConfig(
     max_file_size_bytes=1_000_000,
     per_file_timeout_seconds=10.0,
-    enable_ai_review=False,  # Deterministic static analysis by default
+    include_re_context=True,  # Enriches findings with architectural component, blast radius & routes
+    enable_ai_review=False,   # Deterministic static analysis by default
 )
 engine = LocalReviewEngine(repo_root=Path("."), config=config)
 report = engine.review_local_git_diff()
 print(f"Scanned {len(report.files_reviewed)} files. Found {len(report.findings)} issues.")
+
+# 2. Architecture & Dependency Health Analysis
+arch_report = analyze_architecture(repo_root=Path("."), max_cycles=10)
+print(f"Architecture Score: {arch_report.health_score}/100")
+print(f"Detected {len(arch_report.cycles)} circular dependencies.")
+
+# 3. Reverse Engineering Intelligence with Integrated Review
+re_report = reverse_engineer_with_review(repo_root=Path("."))
+print(f"Scanned {re_report.inventory.total_files} files across {len(re_report.inventory.languages)} languages.")
+print(f"Discovered {re_report.api_inventory.total_routes} API routes and {re_report.data_model_inventory.total_models} data models.")
+if re_report.review_summary:
+    print(f"Integrated review findings: {re_report.review_summary.get('total_findings', 0)}")
+
+# 4. Change Impact Analysis & Predictive Test Selection
+impact_report = analyze_impact(repo_root=Path("."), unstaged=True)
+print(f"Impact Risk Level: {impact_report.risk_level} (Score: {impact_report.risk_score}/100)")
+print(f"Impacted Entities: {len(impact_report.impacted_entities)}")
+print(f"Recommended Tests: {[t.test_file for t in impact_report.recommended_tests]}")
+
+# 5. Continuous Engineering Intelligence & Historical Health Tracking
+snap = capture_snapshot(repo_root=Path("."), persist=True)
+print(f"Captured snapshot {snap.id} (Health: {snap.metrics.health_score}/100, Debt: {snap.metrics.technical_debt_score} pts)")
+trends = analyze_trends(repo_root=Path("."))
+print(f"Repository Health Trend: {trends.health_direction} | Debt Trend: {trends.debt_direction}")
 ```
+
+
+### 4. Deterministic Rule Catalog
+
+LogicFalcon operates completely offline and deterministically without hallucination risk:
+
+| Rule Code | Category | Name | Detection |
+| :--- | :--- | :--- | :--- |
+| `SEC-001` | Security | Dynamic Code Execution | `eval()` and `exec()` invocations |
+| `SEC-002` | Security | Unsafe Shell / Command Execution | `subprocess` with `shell=True`, `os.system()`, and `os.popen()` |
+| `SEC-003` | Security | Hardcoded Credential | API keys, private tokens, passwords (redacted in evidence) |
+| `SEC-004` | Security | Insecure Deserialization | `pickle.loads()`, `marshal.loads()`, and `shelve.open()` usage |
+| `SEC-005` | Security | Syntax Error Detection | Unparsable source files |
+| `SEC-008` | Security | Insecure PyYAML Deserialization | `yaml.load()` without `SafeLoader` |
+| `SEC-009` | Security | Insecure Archive Extraction | `extractall()` without safe directory containment |
+| `SEC-010` | Security | XML Entity Expansion (XXE) | Standard library XML parsers susceptible to entity expansion |
+| `REL-002` | Reliability | Missing Network Timeout | `requests`, `httpx`, `urllib` calls without explicit timeout |
+| `QUAL-001` | Quality | Broad Exception Suppression | Bare `except:` or `except Exception: pass` without logging |
+| `DEP-001` | Security | Known Dependency Advisory | Pinned Python (`requirements.txt`, `pyproject.toml`) and JS/TS (`package.json`) matching local CVE database |
+| `ARCH-001` | Architecture | Circular Dependency | Direct or indirect import cycles detected via DFS / Tarjan SCC |
+| `ARCH-002` | Architecture | Layer Boundary Violation | Illegal cross-tier imports violating architecture boundaries |
 
 ---
 

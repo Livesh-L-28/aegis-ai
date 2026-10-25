@@ -1,0 +1,373 @@
+name: Extension Release & Multi-Registry Publishing
+
+# This workflow validates, packages, and publishes the LogicFalcon Multi-IDE extension.
+# SAFETY ENFORCEMENT:
+# 1. NEVER triggers on push or pull_request.
+# 2. Requires explicit manual trigger (workflow_dispatch).
+# 3. Requires strict confirmation ('confirm: PUBLISH') for any external registry upload.
+# 4. Strict artifact immutability: the exact VSIX hashed and validated in CI is published.
+# 5. Secrets and tokens are never printed to logs or included in artifacts.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Intended Extension Release Version (e.g. 0.2.0)'
+        required: true
+        type: string
+        default: '0.2.0'
+      target:
+        description: 'Release Target'
+        required: true
+        type: choice
+        default: 'validation'
+        options:
+          - validation
+          - marketplace
+          - openvsx
+          - both
+      confirm:
+        description: 'Type PUBLISH to authorize publication (ignored for validation)'
+        required: true
+        type: string
+        default: 'NO'
+      release_notes:
+        description: 'Optional short release summary'
+        required: false
+        type: string
+        default: 'LogicFalcon Multi-IDE extension release'
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    name: Preflight Version & Target Validation
+    runs-on: ubuntu-latest
+    outputs:
+      release_version: ${{ steps.check_version.outputs.version }}
+      vsix_filename: ${{ steps.check_version.outputs.vsix_filename }}
+      should_publish: ${{ steps.check_target.outputs.should_publish }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Validate Release Inputs
+        id: check_target
+        run: |
+          echo "=== PREFLIGHT: Release Request Validation ==="
+          echo "Target: ${{ github.event.inputs.target }}"
+          echo "Requested Version: ${{ github.event.inputs.version }}"
+
+          if [ "${{ github.event.inputs.target }}" != "validation" ]; then
+            if [ "${{ github.event.inputs.confirm }}" != "PUBLISH" ]; then
+              echo "::error::Publishing targets require confirm input to be exactly 'PUBLISH'."
+              exit 1
+            fi
+            echo "should_publish=true" >> $GITHUB_OUTPUT
+          else
+            echo "should_publish=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Validate Extension Manifest Version & Changelog
+        id: check_version
+        run: |
+          PKG_VERSION=$(node -p "require('./extensions/vscode/package.json').version")
+          REQ_VERSION="${{ github.event.inputs.version }}"
+          
+          if [ "$PKG_VERSION" != "$REQ_VERSION" ]; then
+            echo "::error::Requested version ($REQ_VERSION) does not match extensions/vscode/package.json version ($PKG_VERSION)."
+            exit 1
+          fi
+
+          if ! grep -q "## \[$REQ_VERSION\]" extensions/vscode/CHANGELOG.md; then
+            echo "::error::Version $REQ_VERSION is not documented in extensions/vscode/CHANGELOG.md."
+            exit 1
+          fi
+
+          echo "version=$PKG_VERSION" >> $GITHUB_OUTPUT
+          echo "vsix_filename=logicfalcon-vscode-${PKG_VERSION}.vsix" >> $GITHUB_OUTPUT
+          echo "[PASS] Manifest version and changelog entry match: $PKG_VERSION"
+
+  quality-gates:
+    name: Quality Gates & Automated Tests
+    needs: preflight
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+          cache-dependency-path: |
+            extensions/shared/package.json
+            extensions/vscode/package.json
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install Python Dependencies & LogicFalcon Engine
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Verify Python CLI & Capabilities Interface
+        run: |
+          python -m logicfalcon.cli capabilities --format json
+
+      - name: Install Node Dependencies (Shared)
+        working-directory: extensions/shared
+        run: npm install
+
+      - name: Run Shared Package Unit Tests
+        working-directory: extensions/shared
+        run: npm test
+
+      - name: Install Node Dependencies (VS Code Extension)
+        working-directory: extensions/vscode
+        run: npm install
+
+      - name: Run Extension Unit Tests
+        working-directory: extensions/vscode
+        run: npm test
+
+      - name: Compile & Bundle Extension
+        working-directory: extensions/vscode
+        run: npm run bundle
+
+      - name: Verify Bundle Integrity
+        run: |
+          if [ ! -s "extensions/vscode/dist/extension.js" ]; then
+            echo "::error::Compiled bundle dist/extension.js is missing or empty."
+            exit 1
+          fi
+          echo "[PASS] Extension bundle compiled successfully."
+
+  package:
+    name: Package & Validate VSIX Archive
+    needs: [preflight, quality-gates]
+    runs-on: ubuntu-latest
+    outputs:
+      vsix_sha256: ${{ steps.package_vsix.outputs.sha256 }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Dependencies & Bundle
+        working-directory: extensions/vscode
+        run: |
+          npm install
+          npm run bundle
+
+      - name: Package VSIX
+        id: package_vsix
+        working-directory: extensions/vscode
+        run: |
+          npx @vscode/vsce package --no-dependencies
+          
+          VSIX_FILE=$(ls *.vsix | head -n 1)
+          if [ -z "$VSIX_FILE" ]; then
+            echo "::error::No VSIX package was produced."
+            exit 1
+          fi
+
+          SHA=$(sha256sum "$VSIX_FILE" | awk '{print $1}')
+          SIZE=$(stat -c%s "$VSIX_FILE" 2>/dev/null || stat -f%z "$VSIX_FILE")
+
+          echo "vsix_file=$VSIX_FILE" >> $GITHUB_OUTPUT
+          echo "sha256=$SHA" >> $GITHUB_OUTPUT
+          echo "size=$SIZE" >> $GITHUB_OUTPUT
+
+          echo "=== VSIX Build Details ==="
+          echo "File: $VSIX_FILE"
+          echo "Size: $SIZE bytes"
+          echo "SHA-256: $SHA"
+
+      - name: Inspect VSIX Archive Contents & Security Boundaries
+        working-directory: extensions/vscode
+        run: |
+          VSIX_FILE=$(ls *.vsix | head -n 1)
+          
+          # Inspect contents using unzip
+          unzip -l "$VSIX_FILE" > vsix_manifest.txt
+          cat vsix_manifest.txt
+
+          # Security check: Ensure NO protected paths, .env, or secrets are packaged
+          if grep -E "(\.env|render_schema|credentials|\.pem|\.key)" vsix_manifest.txt; then
+            echo "::error::Security violation: sensitive files detected in VSIX archive!"
+            exit 1
+          fi
+
+          # Ensure required extension files are present
+          if ! grep -q "extension/dist/extension.js" vsix_manifest.txt; then
+            echo "::error::Required runtime file extension/dist/extension.js missing from VSIX."
+            exit 1
+          fi
+
+          if ! grep -q "extension/package.json" vsix_manifest.txt; then
+            echo "::error::extension/package.json missing from VSIX."
+            exit 1
+          fi
+
+          echo "[PASS] VSIX archive security and completeness checks passed."
+
+      - name: Generate Machine-Readable Release Manifest
+        working-directory: extensions/vscode
+        run: |
+          VSIX_FILE=$(ls *.vsix | head -n 1)
+          cat <<EOF > extension-release-manifest.json
+          {
+            "name": "logicfalcon-vscode",
+            "version": "${{ needs.preflight.outputs.release_version }}",
+            "publisher": "logicfalcon",
+            "artifact": "$VSIX_FILE",
+            "sha256": "${{ steps.package_vsix.outputs.sha256 }}",
+            "size": ${{ steps.package_vsix.outputs.size }},
+            "build_timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "git_commit": "$GITHUB_SHA",
+            "target": "${{ github.event.inputs.target }}"
+          }
+          EOF
+          cat extension-release-manifest.json
+
+      - name: Upload VSIX and Release Manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: logicfalcon-vsix-release
+          path: |
+            extensions/vscode/*.vsix
+            extensions/vscode/extension-release-manifest.json
+          retention-days: 14
+
+  acceptance:
+    name: Local/CI Acceptance & Activation Smoke Test
+    needs: [preflight, package]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Download VSIX Release Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: logicfalcon-vsix-release
+          path: extensions/vscode/
+
+      - name: Verify SHA-256 Checksum Consistency
+        working-directory: extensions/vscode
+        run: |
+          VSIX_FILE=$(ls *.vsix | head -n 1)
+          RECORDED_SHA=$(node -p "require('./extension-release-manifest.json').sha256")
+          CALC_SHA=$(sha256sum "$VSIX_FILE" | awk '{print $1}')
+          
+          if [ "$RECORDED_SHA" != "$CALC_SHA" ]; then
+            echo "::error::VSIX artifact integrity failure: checksum mismatch."
+            exit 1
+          fi
+          echo "[PASS] VSIX artifact hash matches recorded release manifest."
+
+      - name: Validate Manifest Metadata & Engine Compatibility
+        working-directory: extensions/vscode
+        run: |
+          node -e '
+          const m = require("./package.json");
+          if (!m.publisher || m.publisher !== "logicfalcon") throw new Error("Invalid publisher");
+          if (!m.engines || !m.engines.vscode) throw new Error("Missing engines.vscode");
+          console.log("[PASS] Engine compatibility constraint: " + m.engines.vscode);
+          '
+
+  publish:
+    name: Registry Publication
+    needs: [preflight, package, acceptance]
+    runs-on: ubuntu-latest
+    if: needs.preflight.outputs.should_publish == 'true'
+    steps:
+      - name: Download VSIX Release Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: logicfalcon-vsix-release
+          path: ./
+
+      - name: Verify Pre-Publish Artifact Checksum
+        run: |
+          VSIX_FILE=$(ls *.vsix | head -n 1)
+          RECORDED_SHA=$(node -p "require('./extension-release-manifest.json').sha256")
+          CALC_SHA=$(sha256sum "$VSIX_FILE" | awk '{print $1}')
+          if [ "$RECORDED_SHA" != "$CALC_SHA" ]; then
+            echo "::error::Artifact corrupted prior to publication."
+            exit 1
+          fi
+          echo "[PASS] Promoting exact built and verified artifact: $VSIX_FILE"
+
+      - name: Publish to Visual Studio Marketplace
+        if: github.event.inputs.target == 'marketplace' || github.event.inputs.target == 'both'
+        env:
+          VS_MARKETPLACE_TOKEN: ${{ secrets.VS_MARKETPLACE_TOKEN }}
+        run: |
+          VSIX_FILE=$(ls *.vsix | head -n 1)
+          if [ -z "$VS_MARKETPLACE_TOKEN" ]; then
+            echo "::warning::VS_MARKETPLACE_TOKEN secret is not configured in this repository. Skipping VS Marketplace publish."
+            echo "status=SKIPPED_NO_TOKEN" >> $GITHUB_ENV
+          else
+            echo "Publishing $VSIX_FILE to Visual Studio Marketplace..."
+            npx @vscode/vsce publish --packagePath "$VSIX_FILE" -p "$VS_MARKETPLACE_TOKEN"
+            echo "status=PUBLISHED" >> $GITHUB_ENV
+          fi
+
+      - name: Publish to Open VSX Registry
+        if: github.event.inputs.target == 'openvsx' || github.event.inputs.target == 'both'
+        env:
+          OPEN_VSX_TOKEN: ${{ secrets.OPEN_VSX_TOKEN }}
+        run: |
+          VSIX_FILE=$(ls *.vsix | head -n 1)
+          if [ -z "$OPEN_VSX_TOKEN" ]; then
+            echo "::warning::OPEN_VSX_TOKEN secret is not configured in this repository. Skipping Open VSX publish."
+          else
+            echo "Publishing $VSIX_FILE to Open VSX..."
+            npx ovsx publish "$VSIX_FILE" -p "$OPEN_VSX_TOKEN"
+          fi
+
+  post-publish-verification:
+    name: Post-Publication Registry Verification
+    needs: [preflight, package, publish]
+    runs-on: ubuntu-latest
+    if: always() && needs.preflight.outputs.should_publish == 'true'
+    steps:
+      - name: Check Open VSX Registry Listing
+        if: github.event.inputs.target == 'openvsx' || github.event.inputs.target == 'both'
+        run: |
+          echo "Querying Open VSX Registry API for logicfalcon/logicfalcon-vscode..."
+          HTTP_STATUS=$(curl -s -o openvsx_resp.json -w "%{http_code}" "https://open-vsx.org/api/logicfalcon/logicfalcon-vscode" || echo "000")
+          if [ "$HTTP_STATUS" = "200" ]; then
+            PUB_VERSION=$(node -p "require('./openvsx_resp.json').version || 'unknown'")
+            echo "[VERIFIED] Open VSX listing found. Published version: $PUB_VERSION"
+          else
+            echo "[PENDING VERIFICATION] Open VSX responded with HTTP $HTTP_STATUS (index propagation may take several minutes)."
+          fi
+
+      - name: Post Summary to Workflow Step Summary
+        run: |
+          cat <<EOF >> $GITHUB_STEP_SUMMARY
+          # LogicFalcon Extension Release Summary 🦅
+
+          - **Version:** ${{ needs.preflight.outputs.release_version }}
+          - **Artifact SHA-256:** \`${{ needs.package.outputs.vsix_sha256 }}\`
+          - **Target:** \`${{ github.event.inputs.target }}\`
+          - **Status:** Completed
+          
+          ### Registry Status
+          - **Visual Studio Marketplace:** [LogicFalcon on Marketplace](https://marketplace.visualstudio.com/items?itemName=logicfalcon.logicfalcon-vscode)
+          - **Open VSX Registry:** [LogicFalcon on Open VSX](https://open-vsx.org/extension/logicfalcon/logicfalcon-vscode)
+          - **Cursor & Antigravity:** Supported via direct VSIX installation.
+          EOF

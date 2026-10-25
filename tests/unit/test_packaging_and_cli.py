@@ -1,5 +1,7 @@
 """Tests for top-level aegis package API and unified CLI commands."""
 
+from pathlib import Path
+
 import pytest
 
 import aegis
@@ -69,15 +71,19 @@ def test_cli_doctor_via_main(capsys: pytest.CaptureFixture[str]) -> None:
     assert "System diagnostics complete" in captured.out
 
 
-def test_cli_review_subcommand_dispatch(capsys: pytest.CaptureFixture[str]) -> None:
-    code = run_main(["review", "--repo", ".", "--format", "json"])
+def test_cli_review_subcommand_dispatch(
+    cli_fixture_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code = run_main(["review", "--repo", str(cli_fixture_repo), "--format", "json"])
     assert code in (0, 1)
     captured = capsys.readouterr()
     assert "repository_path" in captured.out
 
 
-def test_cli_review_direct_flag_dispatch(capsys: pytest.CaptureFixture[str]) -> None:
-    code = run_main(["--repo", ".", "--format", "json"])
+def test_cli_review_direct_flag_dispatch(
+    cli_fixture_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code = run_main(["--repo", str(cli_fixture_repo), "--format", "json"])
     assert code in (0, 1)
     captured = capsys.readouterr()
     assert "repository_path" in captured.out

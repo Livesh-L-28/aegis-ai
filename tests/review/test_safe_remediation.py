@@ -286,3 +286,85 @@ def test_fix_engine_verify_remediation_syntax_failure(temp_repo: Path) -> None:
     assert res.syntax_valid is False
     assert "syntax error" in (res.error_message or "").lower()
 
+
+def test_fix_engine_detect_overlapping_fixes_rejected(temp_repo: Path) -> None:
+    """Verifies that overlapping fix proposals targeting the same file are detected and rejected."""
+    engine = ReviewFixEngine(repo_root=temp_repo)
+    fix1 = ProposedFix(
+        file_path="sample.py",
+        start_line=1,
+        end_line=2,
+        replacement_code="# replacement 1",
+    )
+    fix2 = ProposedFix(
+        file_path="sample.py",
+        start_line=2,
+        end_line=3,
+        replacement_code="# replacement 2",
+    )
+
+    overlaps = engine.detect_overlapping_fixes([fix1, fix2])
+    assert len(overlaps) == 1
+
+    with pytest.raises(FixConflictError) as exc:
+        engine.apply_batch([fix1, fix2], approved=True)
+    assert "overlapping" in str(exc.value).lower()
+
+
+def test_fix_engine_multi_fix_batch_order(temp_repo: Path) -> None:
+    """Verifies that non-overlapping multi-fixes in a file apply cleanly bottom-to-top without offset skew."""
+    f = temp_repo / "multi.py"
+    f.write_text("line1\nline2\nline3\nline4\n")
+
+    engine = ReviewFixEngine(repo_root=temp_repo)
+    fix_top = ProposedFix(
+        file_path="multi.py",
+        start_line=1,
+        end_line=1,
+        replacement_code="line1_new\nline1_extra",
+    )
+    fix_bottom = ProposedFix(
+        file_path="multi.py",
+        start_line=3,
+        end_line=3,
+        replacement_code="line3_new",
+    )
+
+    results = engine.apply_batch([fix_top, fix_bottom], approved=True)
+    assert len(results) == 2
+    assert all(r.success for r in results)
+
+    content = f.read_text()
+    assert "line1_new" in content
+    assert "line1_extra" in content
+    assert "line3_new" in content
+    assert "line4" in content
+
+
+def test_fix_engine_atomic_batch_rollback(temp_repo: Path) -> None:
+    """Verifies that if any fix in a batch fails syntax validation, earlier applied fixes roll back atomically."""
+    target = temp_repo / "rollback_test.py"
+    original = "x = 1\ny = 2\n"
+    target.write_text(original)
+
+    engine = ReviewFixEngine(repo_root=temp_repo)
+    fix_valid = ProposedFix(
+        file_path="rollback_test.py",
+        start_line=1,
+        end_line=1,
+        replacement_code="x = 100",
+    )
+    fix_broken = ProposedFix(
+        file_path="rollback_test.py",
+        start_line=2,
+        end_line=2,
+        replacement_code="y = (def broken syntax",
+    )
+
+    with pytest.raises(FixSyntaxValidationError):
+        engine.apply_batch([fix_valid, fix_broken], approved=True, atomic_rollback=True)
+
+    # File must be rolled back to its original state!
+    assert target.read_text() == original
+
+

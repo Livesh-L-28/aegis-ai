@@ -186,12 +186,16 @@ class ReviewFixEngine:
             target_file.write_text(new_text, encoding="utf-8")
         except Exception as e:
             # Rollback if backup exists
+            rollback_err_msg = ""
             if backup_path and Path(backup_path).exists():
-                shutil.copyfile(backup_path, target_file)
+                try:
+                    shutil.copyfile(backup_path, target_file)
+                except Exception as rbe:
+                    rollback_err_msg = f" (Rollback error: {rbe})"
             return FixApplicationResult(
                 success=False,
                 file_path=fix.file_path,
-                error_message=f"Failed to write changes to {fix.file_path}: {e}",
+                error_message=f"Failed to write changes to {fix.file_path}: {e}{rollback_err_msg}",
             )
 
         return FixApplicationResult(
@@ -202,20 +206,83 @@ class ReviewFixEngine:
             applied_lines_range=(start, end),
         )
 
+    def detect_overlapping_fixes(self, fixes: list[ProposedFix]) -> list[tuple[ProposedFix, ProposedFix]]:
+        """Identifies any pairs of proposed fixes targeting overlapping line ranges on the same file."""
+        by_file: dict[str, list[ProposedFix]] = {}
+        for f in fixes:
+            by_file.setdefault(f.file_path, []).append(f)
+
+        overlaps: list[tuple[ProposedFix, ProposedFix]] = []
+        for _fp, file_fixes in by_file.items():
+            if len(file_fixes) < 2:
+                continue
+            sorted_fixes = sorted(file_fixes, key=lambda x: (x.start_line, x.end_line))
+            for i in range(len(sorted_fixes) - 1):
+                f1 = sorted_fixes[i]
+                f2 = sorted_fixes[i + 1]
+                if f1.end_line >= f2.start_line:
+                    overlaps.append((f1, f2))
+        return overlaps
+
     def apply_batch(
         self,
         fixes: list[ProposedFix],
         approved: bool = False,
         dry_run: bool = False,
+        atomic_rollback: bool = True,
     ) -> list[FixApplicationResult]:
-        """Applies a batch of fixes sequentially, failing fast on conflicts."""
+        """Applies a batch of fixes cleanly, detecting overlaps, applying bottom-to-top per file, and rolling back atomically on any failure."""
+        overlaps = self.detect_overlapping_fixes(fixes)
+        if overlaps:
+            f1, f2 = overlaps[0]
+            raise FixConflictError(
+                f"Conflicting overlapping fixes detected in '{f1.file_path}': "
+                f"[{f1.start_line}-{f1.end_line}] and [{f2.start_line}-{f2.end_line}]."
+            )
+
+        # Sort fixes per file bottom-to-top (descending start_line) so line shifts don't invalidate subsequent offsets
+        by_file: dict[str, list[ProposedFix]] = {}
+        for f in fixes:
+            by_file.setdefault(f.file_path, []).append(f)
+
+        sorted_batch: list[ProposedFix] = []
+        for file_fixes in by_file.values():
+            sorted_batch.extend(sorted(file_fixes, key=lambda x: x.start_line, reverse=True))
+
         results: list[FixApplicationResult] = []
-        for fix in fixes:
-            res = self.apply_fix(fix=fix, approved=approved, dry_run=dry_run)
-            results.append(res)
-            if not res.success:
-                break
+        applied_for_rollback: list[FixApplicationResult] = []
+
+        for fix in sorted_batch:
+            try:
+                res = self.apply_fix(fix=fix, approved=approved, dry_run=dry_run)
+                results.append(res)
+                if res.success and not dry_run:
+                    applied_for_rollback.append(res)
+                elif not res.success:
+                    if atomic_rollback and not dry_run:
+                        self.rollback(applied_for_rollback)
+                    break
+            except Exception as exc:
+                if atomic_rollback and not dry_run:
+                    self.rollback(applied_for_rollback)
+                raise exc
+
         return results
+
+    def rollback(self, results: list[FixApplicationResult]) -> int:
+        """Restores modified files from their .orig backups, returning the number of files restored."""
+        restored = 0
+        for res in results:
+            if res.backup_path and Path(res.backup_path).exists():
+                target_file = validate_contained_path(self.repo_root, res.file_path)
+                if target_file:
+                    try:
+                        shutil.copyfile(res.backup_path, target_file)
+                        restored += 1
+                        logger.info(f"Rolled back {res.file_path} from {res.backup_path}")
+                    except Exception as e:
+                        logger.error(f"Failed to rollback {res.file_path}: {e}")
+        return restored
 
     def apply_in_temp_workspace(
         self,

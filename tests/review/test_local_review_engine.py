@@ -79,9 +79,9 @@ new file mode 100644
         assert len(report.files_reviewed) == 0
 
 
-def test_review_local_git_diff_smoke() -> None:
-    # Smoke test on the current AEGIS AI repository without modifying anything
-    engine = LocalReviewEngine(repo_root=".")
+def test_review_local_git_diff_smoke(cli_fixture_repo: Path) -> None:
+    # Smoke test on an isolated git fixture repository
+    engine = LocalReviewEngine(repo_root=cli_fixture_repo)
     report = engine.review_local_git_diff()
     assert report.repository_path != ""
     assert isinstance(report.findings, list)

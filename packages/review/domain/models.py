@@ -25,6 +25,7 @@ class FindingCategory(StrEnum):
     COMPATIBILITY = "COMPATIBILITY"
     TEST_COVERAGE = "TEST_COVERAGE"
     PERFORMANCE = "PERFORMANCE"
+    ARCHITECTURE = "ARCHITECTURE"
 
 
 class FindingOrigin(StrEnum):
@@ -68,9 +69,11 @@ def generate_finding_fingerprint(
     start_line: int,
     category: str,
     rule_id: str,
+    discriminator: str = "",
 ) -> str:
     """Generates a stable deterministic fingerprint for deduplicating findings."""
-    raw = f"{file_path.strip().lower()}:{start_line}:{category.strip().upper()}:{rule_id.strip()}"
+    base = f"{file_path.strip().lower()}:{start_line}:{category.strip().upper()}:{rule_id.strip()}"
+    raw = f"{base}:{discriminator.strip()}" if discriminator else base
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
@@ -122,11 +125,18 @@ class ReviewFinding(BaseModel):
 
     def model_post_init(self, __context: Any) -> None:
         if not self.deduplication_hash:
+            discriminator = ""
+            if self.metadata:
+                rule_name = self.metadata.get("rule_name", "")
+                target_mod = self.metadata.get("target_module", "")
+                if rule_name or target_mod:
+                    discriminator = f"{rule_name}:{target_mod}"
             self.deduplication_hash = generate_finding_fingerprint(
                 file_path=self.location.file_path,
                 start_line=self.location.start_line,
                 category=self.category.value,
                 rule_id=self.rule_id,
+                discriminator=discriminator,
             )
 
 
@@ -196,6 +206,8 @@ class ReviewReport(BaseModel):
     is_clean: bool = True
     errors: list[str] = Field(default_factory=list)
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    re_context: dict[str, Any] | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class ReviewSession(BaseModel):
@@ -215,3 +227,114 @@ class ReviewSession(BaseModel):
     completed_at: datetime | None = None
     cancellation_reason: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class DependencyCycle(BaseModel):
+    """Represents a detected circular dependency between modules."""
+
+    modules: list[str]
+    length: int
+    display_path: str
+
+
+class CycleGroup(BaseModel):
+    """A strongly connected component (SCC) cluster of mutually entangled modules."""
+
+    id: str
+    modules: list[str]
+    size: int
+    cycle_count: int = 1
+
+
+class RuleException(BaseModel):
+    """Documented exception for an architectural rule with required rationale and optional expiry."""
+
+    source_pattern: str = "*"
+    target_pattern: str = "*"
+    reason: str
+    expires_at: str | None = None  # ISO format string e.g. "2026-12-31" or "2026-12-31T00:00:00Z"
+    rule_name: str | None = None
+
+    def is_expired(self, reference_time: datetime | None = None) -> bool:
+        """Determines if this architectural exception has expired."""
+        if not self.expires_at:
+            return False
+        ref = reference_time or datetime.now(UTC)
+        try:
+            exp_str = self.expires_at.strip()
+            if "T" in exp_str:
+                exp_dt = datetime.fromisoformat(exp_str)
+            else:
+                exp_dt = datetime.fromisoformat(f"{exp_str}T23:59:59+00:00")
+            if exp_dt.tzinfo is None:
+                exp_dt = exp_dt.replace(tzinfo=UTC)
+            return ref > exp_dt
+        except Exception:
+            return False
+
+
+class LayerDefinition(BaseModel):
+    """Architectural layer configuration with permitted dependency targets."""
+
+    name: str
+    patterns: list[str]  # e.g. ["*domain*", "src/domain/*"]
+    allowed_dependencies: list[str] = Field(default_factory=list)  # list of permitted layer names
+    description: str | None = None
+
+
+class BoundaryRule(BaseModel):
+    """Configuration rule for architectural boundary enforcement."""
+
+    name: str = "boundary_violation"
+    source_pattern: str = "*"
+    forbidden_pattern: str
+    description: str | None = None
+
+
+class ArchitecturePolicy(BaseModel):
+    """Comprehensive architectural boundary, layering, and isolation policy."""
+
+    version: str = "1.0"
+    layers: list[LayerDefinition] = Field(default_factory=list)
+    rules: list[BoundaryRule] = Field(default_factory=list)
+    exceptions: list[RuleException] = Field(default_factory=list)
+
+
+class BoundaryViolation(BaseModel):
+    """Represents an architectural boundary or layering policy violation."""
+
+    source_module: str
+    source_file: str
+    target_module: str
+    rule_name: str
+    description: str
+    dependency_path: list[str] = Field(default_factory=list)
+    rule_type: str = "BOUNDARY"  # "BOUNDARY", "LAYER_HIERARCHY", or "MODULE_ISOLATION"
+    is_transitive: bool = False
+
+
+class ModuleMetric(BaseModel):
+    """Coupling and instability metrics for a Python module."""
+
+    module_name: str
+    file_path: str
+    afferent_coupling: int  # incoming imports (Ca)
+    efferent_coupling: int  # outgoing imports (Ce)
+    instability: float  # Ce / (Ca + Ce)
+    is_hotspot: bool = False
+
+
+class ArchitectureReport(BaseModel):
+    """Comprehensive repository architecture summary and explainable health evaluation."""
+
+    total_modules: int = 0
+    total_internal_dependencies: int = 0
+    cycles: list[DependencyCycle] = Field(default_factory=list)
+    cycle_groups: list[CycleGroup] = Field(default_factory=list)
+    boundary_violations: list[BoundaryViolation] = Field(default_factory=list)
+    module_metrics: list[ModuleMetric] = Field(default_factory=list)
+    layers: list[LayerDefinition] = Field(default_factory=list)
+    health_score: float = 100.0  # 0 to 100
+    health_summary: str = ""
+    scoring_breakdown: dict[str, Any] = Field(default_factory=dict)
+

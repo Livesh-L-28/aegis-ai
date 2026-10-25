@@ -4,7 +4,8 @@ import asyncio
 import json
 import subprocess
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -21,6 +22,7 @@ from packages.intelligence.evidence.graph_models import (
 from packages.logging.logger import get_logger
 from packages.review.adapters.ast_security import ASTSecurityAdapter
 from packages.review.adapters.base import StaticAnalysisAdapter
+from packages.review.adapters.dependency_advisory import DependencyAdvisoryAdapter
 from packages.review.adapters.ruff_adapter import RuffAnalysisAdapter
 from packages.review.adapters.runner import execute_adapter_with_enforceable_timeout
 from packages.review.ai.context_builder import ContextBuilder
@@ -29,6 +31,8 @@ from packages.review.analyzer.dependency_graph import DependencyGraph
 from packages.review.analyzer.symbol_mapper import SymbolMapper
 from packages.review.domain.models import (
     AffectedArtifacts,
+    ArchitecturePolicy,
+    BoundaryRule,
     ChangedSymbol,
     DiffChangeType,
     FindingCategory,
@@ -41,6 +45,7 @@ from packages.review.domain.models import (
 )
 from packages.review.git.diff_parser import GitDiffParser
 from packages.review.security.path_validation import validate_contained_path
+from packages.review.validator import FindingValidator
 
 logger = get_logger("aegis.review.engine")
 
@@ -61,6 +66,10 @@ class ReviewConfig(BaseModel):
     repository_id: UUID | None = None
     commit_sha: str | None = None
     organization_id: UUID | None = None
+    architecture_boundaries: list[BoundaryRule] = Field(default_factory=list)
+    architecture_policy: ArchitecturePolicy | None = None
+    include_re_context: bool = False  # Reverse engineering intelligence context enrichment
+    include_impact_analysis: bool = False  # Change impact analysis and predictive test selection
     ignored_patterns: list[str] = Field(
         default_factory=lambda: [
             ".git",
@@ -77,8 +86,21 @@ class ReviewConfig(BaseModel):
         ]
     )
 
+    def get_effective_policy(self) -> ArchitecturePolicy:
+        """Returns the active ArchitecturePolicy, synthesizing one from architecture_boundaries if necessary."""
+        if self.architecture_policy:
+            return self.architecture_policy
+        if self.architecture_boundaries:
+            return ArchitecturePolicy(rules=self.architecture_boundaries)
+        return ArchitecturePolicy()
+
     @classmethod
-    def load_config(cls, config_path: Path | str | None = None, repo_root: Path | str = ".") -> "ReviewConfig":
+    def load_config(
+        cls,
+        config_path: Path | str | None = None,
+        repo_root: Path | str = ".",
+        raise_on_error: bool = False,
+    ) -> "ReviewConfig":
         """Loads configuration from an explicit path or repository files (.logicfalcon.json, .logicfalcon.yml)."""
         root = Path(repo_root).resolve()
         candidate: Path | None = None
@@ -86,7 +108,10 @@ class ReviewConfig(BaseModel):
         if config_path:
             candidate = Path(config_path) if Path(config_path).is_absolute() else root / config_path
             if not candidate.is_file():
-                logger.warning(f"Specified config file '{config_path}' not found; using default config.")
+                err_msg = f"Specified config file '{config_path}' not found."
+                if raise_on_error:
+                    raise FileNotFoundError(err_msg)
+                logger.warning(f"{err_msg}; using default config.")
                 return cls()
         else:
             for name in (".logicfalcon.json", ".logicfalcon.yaml", ".logicfalcon.yml", ".aegis.yml", ".aegis.yaml"):
@@ -100,13 +125,77 @@ class ReviewConfig(BaseModel):
                 raw_text = candidate.read_text(encoding="utf-8")
                 if candidate.suffix == ".json":
                     data = json.loads(raw_text)
-                    return cls.model_validate(data)
                 elif candidate.suffix in (".yaml", ".yml"):
                     import yaml
+
                     data = yaml.safe_load(raw_text) or {}
-                    return cls.model_validate(data)
+                else:
+                    data = {}
+
+                # Strict validation for architecture_policy if provided
+                if isinstance(data, dict):
+                    policy_data = data.get("architecture_policy")
+                    if isinstance(policy_data, dict):
+                        # Validate layer uniqueness
+                        layers = policy_data.get("layers", [])
+                        if isinstance(layers, list):
+                            seen_layers: set[str] = set()
+                            for layer_item in layers:
+                                if isinstance(layer_item, dict):
+                                    lname = layer_item.get("name")
+                                    if not lname or not isinstance(lname, str):
+                                        raise ValueError("Each layer definition must have a non-empty 'name' string.")
+                                    if lname in seen_layers:
+                                        raise ValueError(f"Duplicate layer definition found: '{lname}'. Layer names must be unique.")
+                                    seen_layers.add(lname)
+                                    patterns = layer_item.get("patterns")
+                                    if not patterns or not isinstance(patterns, list):
+                                        raise ValueError(f"Layer '{lname}' must declare a non-empty list of 'patterns'.")
+                                    for pat in patterns:
+                                        if ".." in str(pat):
+                                            raise ValueError(f"Path traversal sequence '..' is forbidden in layer pattern: '{pat}'")
+                        # Validate rules
+                        rules = policy_data.get("rules", [])
+                        if isinstance(rules, list):
+                            for r in rules:
+                                if isinstance(r, dict) and (
+                                    ".." in str(r.get("source_pattern", ""))
+                                    or ".." in str(r.get("forbidden_pattern", ""))
+                                ):
+                                    raise ValueError("Path traversal sequence '..' is forbidden in boundary rule patterns.")
+                        # Validate exceptions
+                        exceptions = policy_data.get("exceptions", [])
+                        if isinstance(exceptions, list):
+                            for ex in exceptions:
+                                if isinstance(ex, dict):
+                                    reason = ex.get("reason")
+                                    if not reason or not isinstance(reason, str) or not reason.strip():
+                                        raise ValueError("Architectural exception must provide a non-empty 'reason' explaining the violation.")
+                                    if ".." in str(ex.get("source_pattern", "")) or ".." in str(ex.get("target_pattern", "")):
+                                        raise ValueError("Path traversal sequence '..' is forbidden in exception patterns.")
+                                    expires_at = ex.get("expires_at")
+                                    if expires_at:
+                                        try:
+                                            exp_str = str(expires_at).strip()
+                                            if "T" in exp_str:
+                                                datetime.fromisoformat(exp_str)
+                                            else:
+                                                datetime.fromisoformat(f"{exp_str}T23:59:59+00:00")
+                                        except Exception as dt_err:
+                                            raise ValueError(f"Invalid 'expires_at' format '{expires_at}' in architectural exception: {dt_err}") from dt_err
+
+                    # Backward compatibility: synthesize architecture_policy from architecture_boundaries
+                    if "architecture_boundaries" in data and "architecture_policy" not in data:
+                        boundaries = data.get("architecture_boundaries", [])
+                        if isinstance(boundaries, list):
+                            data["architecture_policy"] = {"rules": boundaries}
+
+                return cls.model_validate(data)
             except Exception as e:
-                logger.warning(f"Failed to parse config file '{candidate}': {e}; using default config.")
+                err_msg = f"Failed to parse config file '{candidate}': {e}"
+                if raise_on_error:
+                    raise ValueError(err_msg) from e
+                logger.warning(f"{err_msg}; using default config.")
 
         return cls()
 
@@ -137,6 +226,7 @@ class LocalReviewEngine:
             self.adapters = custom_adapters
         else:
             self.adapters.append(ASTSecurityAdapter())
+            self.adapters.append(DependencyAdvisoryAdapter())
             if self.config.enable_external_tools:
                 self.adapters.append(RuffAnalysisAdapter(default_timeout_seconds=5.0))
 
@@ -373,6 +463,9 @@ class LocalReviewEngine:
                 except Exception as exc:
                     logger.debug("Evidence record persistence omitted: %s", exc)
 
+        re_ctx = self._enrich_findings_with_re_context(findings, files_reviewed)
+        impact_ctx = self._run_impact_analysis(files_reviewed, findings)
+
         elapsed = time.perf_counter() - start_time
         return ReviewReport(
             repository_path=str(self.repo_root),
@@ -385,7 +478,128 @@ class LocalReviewEngine:
             execution_time_seconds=round(elapsed, 4),
             is_clean=len(findings) == 0,
             errors=errors,
+            re_context=re_ctx,
+            metadata={
+                "analyzers_executed": [a.name for a in self.adapters if a.is_available()],
+                "re_context_enabled": self.config.include_re_context,
+                "impact_analysis_enabled": self.config.include_impact_analysis,
+                "impact_analysis": impact_ctx,
+            },
         )
+
+    def _run_impact_analysis(
+        self,
+        files_reviewed: list[str],
+        findings: list[ReviewFinding],
+    ) -> dict[str, Any] | None:
+        """Executes change impact analysis on reviewed files without altering finding severities."""
+        if not self.config.include_impact_analysis:
+            return None
+        try:
+            from packages.review.impact.engine import ChangeImpactEngine
+
+            findings_by_file: dict[str, list[ReviewFinding]] = {}
+            for f in findings:
+                findings_by_file.setdefault(f.location.file_path, []).append(f)
+
+            impact_engine = ChangeImpactEngine(repo_root=self.repo_root)
+            report = impact_engine.analyze(
+                explicit_files=files_reviewed,
+                findings_by_file=findings_by_file,
+            )
+            return {
+                "risk_level": report.risk_level.value,
+                "risk_score": report.risk_score,
+                "risk_reasons": report.risk_reasons,
+                "impacted_entities_count": len(report.impacted_entities),
+                "recommended_tests_count": len(report.recommended_tests),
+                "recommended_tests": [t.test_file for t in report.recommended_tests[:10]],
+            }
+        except Exception as e:
+            logger.warning("Change impact analysis enrichment omitted: %s", e)
+            return {"error": str(e)}
+
+    def _enrich_findings_with_re_context(
+        self,
+        findings: list[ReviewFinding],
+        files_reviewed: list[str],
+    ) -> dict[str, Any] | None:
+        """Enriches finding metadata with architectural component, reachability, and blast-radius context.
+
+        CRITICAL SAFETY INVARIANT:
+        This enrichment never suppresses, downgrades, or modifies finding severities or verdicts.
+        """
+        if not self.config.include_re_context:
+            return None
+
+        try:
+            from packages.review.reverse_engineering.engine import ReverseEngineeringEngine
+
+            re_engine = ReverseEngineeringEngine(
+                repo_root=self.repo_root,
+                max_file_size_bytes=self.config.max_file_size_bytes,
+                timeout_seconds=self.config.per_file_timeout_seconds * 3,
+            )
+            re_report = re_engine.analyze()
+
+            prefix_to_comp = {comp.module_prefix: comp for comp in re_report.architecture_components}
+            routes_by_file: dict[str, list[dict[str, Any]]] = {}
+            for r in re_report.api_inventory.routes:
+                routes_by_file.setdefault(r.file_path, []).append({
+                    "method": r.method.value,
+                    "path": r.path,
+                    "handler": r.handler_name,
+                    "auth_detected": r.auth_detected,
+                })
+
+            models_by_file: dict[str, list[dict[str, Any]]] = {}
+            for m in re_report.data_model_inventory.models:
+                models_by_file.setdefault(m.file_path, []).append({
+                    "name": m.name,
+                    "model_type": m.model_type,
+                    "fields_count": len(m.fields),
+                })
+
+            reverse_deps = self.dependency_graph.reverse_deps
+
+            for finding in findings:
+                fp = finding.location.file_path
+                # 1. Match architecture component
+                for prefix, comp in prefix_to_comp.items():
+                    if fp.startswith(prefix):
+                        finding.metadata["re_component"] = comp.name
+                        finding.metadata["re_layer"] = comp.layer.value
+                        break
+
+                # 2. Blast radius (reverse dependency count)
+                rev_list = reverse_deps.get(fp, set())
+                finding.metadata["reverse_dependencies_count"] = len(rev_list)
+
+                # 3. Reachable entry points
+                affected_eps: list[str] = []
+                for ep in re_report.inventory.entry_points:
+                    if ep.file_path == fp or ep.file_path in rev_list:
+                        affected_eps.append(ep.name)
+                if affected_eps:
+                    finding.metadata["entry_points_affected"] = affected_eps
+
+                # 4. Associated routes and models
+                if fp in routes_by_file:
+                    finding.metadata["associated_routes"] = routes_by_file[fp]
+                if fp in models_by_file:
+                    finding.metadata["associated_models"] = models_by_file[fp]
+
+            return {
+                "scanned_files": re_report.inventory.total_files,
+                "total_loc": re_report.inventory.total_lines_of_code,
+                "components_count": len(re_report.architecture_components),
+                "api_routes_count": re_report.api_inventory.total_routes,
+                "data_models_count": re_report.data_model_inventory.total_models,
+                "entry_points_count": len(re_report.inventory.entry_points),
+            }
+        except Exception as e:
+            logger.warning("Reverse engineering context enrichment omitted: %s", e)
+            return {"error": str(e)}
 
     def _run_adapter_with_timeout(
         self,
@@ -483,3 +697,132 @@ class LocalReviewEngine:
             )
 
         return self.review_diff(raw_diff)
+
+    def review_file(
+        self,
+        file_path: str | Path,
+        content: str | None = None,
+        cancellation_token: Callable[[], bool] | None = None,
+    ) -> ReviewReport:
+        """Synchronously reviews a single file on disk or an in-memory buffer."""
+        return self.review_files(
+            file_paths=[file_path],
+            override_contents={str(file_path): content} if content is not None else None,
+            cancellation_token=cancellation_token,
+        )
+
+    def review_files(
+        self,
+        file_paths: Sequence[str | Path],
+        override_contents: dict[str, str] | None = None,
+        cancellation_token: Callable[[], bool] | None = None,
+    ) -> ReviewReport:
+        """Synchronously reviews a collection of files (e.g. workspace or active files)."""
+        start_time = time.perf_counter()
+        errors: list[str] = []
+        findings: list[ReviewFinding] = []
+        files_reviewed: list[str] = []
+        overrides = override_contents or {}
+
+        for fp in file_paths:
+            if cancellation_token and cancellation_token():
+                raise ReviewCancelledException("Review cancelled during file analysis.")
+
+            target_path_str = str(fp)
+            contained = validate_contained_path(self.repo_root, target_path_str)
+            if not contained:
+                errors.append(f"Rejected path outside repository boundary: {target_path_str}")
+                continue
+
+            try:
+                rel_path = str(contained.relative_to(self.repo_root))
+            except ValueError:
+                rel_path = target_path_str
+
+            if self._is_ignored(rel_path):
+                continue
+
+            content: str | None = None
+            if target_path_str in overrides:
+                content = overrides[target_path_str]
+            elif rel_path in overrides:
+                content = overrides[rel_path]
+            elif contained.is_file():
+                try:
+                    file_size = contained.stat().st_size
+                    if file_size > self.config.max_file_size_bytes:
+                        findings.append(
+                            ReviewFinding(
+                                rule_id="RESOURCE-LIMIT",
+                                title="File Exceeds Size Limit",
+                                message=(
+                                    f"File '{rel_path}' ({file_size} bytes) exceeds limit "
+                                    f"of {self.config.max_file_size_bytes} bytes; skipping static analysis."
+                                ),
+                                severity=FindingSeverity.INFO,
+                                category=FindingCategory.QUALITY,
+                                origin=FindingOrigin.STATIC_ANALYSIS,
+                                location=SourceLocation(file_path=rel_path, start_line=1),
+                                tool_name="local_review_engine",
+                                confidence=1.0,
+                            )
+                        )
+                        continue
+                    content = contained.read_text(encoding="utf-8", errors="ignore")
+                except OSError as e:
+                    errors.append(f"Failed to read '{rel_path}': {e}")
+                    continue
+            else:
+                errors.append(f"File not found: '{rel_path}'")
+                continue
+
+            if content is None:
+                continue
+
+            files_reviewed.append(rel_path)
+
+            for adapter in self.adapters:
+                if not adapter.is_available():
+                    continue
+
+                if cancellation_token and cancellation_token():
+                    raise ReviewCancelledException("Review cancelled during adapter execution.")
+
+                adapter_findings = self._run_adapter_with_timeout(
+                    adapter=adapter,
+                    file_path=rel_path,
+                    content=content,
+                    timeout_seconds=self.config.per_file_timeout_seconds,
+                )
+                findings.extend(adapter_findings)
+
+        validator = FindingValidator(repo_root=self.repo_root)
+        verified_findings, _ = validator.validate(
+            findings,
+            repo_root=self.repo_root,
+            override_contents=overrides,
+        )
+        re_ctx = self._enrich_findings_with_re_context(verified_findings, files_reviewed)
+        impact_ctx = self._run_impact_analysis(files_reviewed, verified_findings)
+
+        elapsed = time.perf_counter() - start_time
+        return ReviewReport(
+            repository_path=str(self.repo_root),
+            base_commit=None,
+            head_commit=None,
+            diff_summary=GitDiffSummary(),
+            affected_artifacts=AffectedArtifacts(),
+            findings=verified_findings,
+            files_reviewed=files_reviewed,
+            execution_time_seconds=round(elapsed, 4),
+            is_clean=len(verified_findings) == 0,
+            errors=errors,
+            re_context=re_ctx,
+            metadata={
+                "analyzers_executed": [a.name for a in self.adapters if a.is_available()],
+                "re_context_enabled": self.config.include_re_context,
+                "impact_analysis_enabled": self.config.include_impact_analysis,
+                "impact_analysis": impact_ctx,
+            },
+        )
+

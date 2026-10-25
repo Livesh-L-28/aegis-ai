@@ -17,6 +17,25 @@ from packages.review.domain.models import (
 CREDENTIAL_PATTERN = re.compile(
     r"(?i)(?:password|secret|token|api_key|private_key)\s*[:=]\s*['\"]([a-zA-Z0-9_\-\.=/+]{8,})['\"]"
 )
+URI_CREDENTIAL_PATTERN = re.compile(
+    r"([a-zA-Z0-9_+]+://[^:\s]+:)([^@\s]+)(@[^\s\"'\`]+)"
+)
+TOKEN_PATTERN = re.compile(
+    r"(?:ghp_[a-zA-Z0-9]{20,}|AKIA[0-9A-Z]{16}|bearer\s+[a-zA-Z0-9_\-\.=/+]{16,})"
+)
+
+
+def redact_secrets_in_text(text: str) -> str:
+    """Replaces any potential hardcoded secret, token, or connection string credentials with redaction markers."""
+    res = CREDENTIAL_PATTERN.sub(
+        lambda m: m.group(0).replace(m.group(1), "[REDACTED_SECRET]"),
+        text,
+    )
+    res = URI_CREDENTIAL_PATTERN.sub(
+        r"\1[REDACTED_PASSWORD]\3",
+        res,
+    )
+    return TOKEN_PATTERN.sub("[REDACTED_TOKEN]", res)
 
 
 class _ASTVisitor(ast.NodeVisitor):
@@ -129,12 +148,18 @@ class _ASTVisitor(ast.NodeVisitor):
                 )
             )
 
-        # SEC-002: subprocess with shell=True
+        # SEC-002: subprocess with shell=True or os.system / os.popen
         is_subprocess = (
             isinstance(node.func, ast.Attribute)
             and node.func.attr in ("Popen", "run", "call", "check_call", "check_output")
             and isinstance(node.func.value, ast.Name)
             and node.func.value.id == "subprocess"
+        )
+        is_os_cmd = (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr in ("system", "popen")
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "os"
         )
 
         if is_subprocess:
@@ -167,19 +192,60 @@ class _ASTVisitor(ast.NodeVisitor):
                             confidence=0.95,
                         )
                     )
+        elif is_os_cmd and isinstance(node.func, ast.Attribute):
+            cmd_func = f"os.{node.func.attr}"
+            self.findings.append(
+                ReviewFinding(
+                    rule_id="SEC-002",
+                    title=f"Insecure Shell Command Execution ({cmd_func})",
+                    message=f"Invocation of '{cmd_func}()' executes arbitrary shell commands and risks command injection.",
+                    severity=FindingSeverity.CRITICAL,
+                    category=FindingCategory.SECURITY,
+                    origin=FindingOrigin.SECURITY_HEURISTIC,
+                    location=SourceLocation(
+                        file_path=self.file_path,
+                        start_line=node.lineno,
+                        end_line=node.end_lineno or node.lineno,
+                        start_column=node.col_offset,
+                        end_column=node.end_col_offset,
+                        symbol_name=cmd_func,
+                    ),
+                    suggestion="Use subprocess.run([...], shell=False) with an argument list instead.",
+                    why_it_matters="Commands passed to os.system() or os.popen() run via the system shell, enabling command injection.",
+                    tool_name="ast_security",
+                    confidence=1.0,
+                )
+            )
 
-        # SEC-004: insecure deserialization (pickle.loads, pickle.load)
-        if (
+        # SEC-004: insecure deserialization (pickle, marshal, shelve)
+        is_pickle = (
             isinstance(node.func, ast.Attribute)
             and node.func.attr in ("loads", "load")
             and isinstance(node.func.value, ast.Name)
             and node.func.value.id == "pickle"
-        ):
+        )
+        is_marshal = (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr in ("loads", "load")
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "marshal"
+        )
+        is_shelve = (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr == "open"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "shelve"
+        )
+
+        if (is_pickle or is_marshal or is_shelve) and isinstance(node.func, ast.Attribute):
+            lib_name = "pickle" if is_pickle else ("marshal" if is_marshal else "shelve")
+            action_desc = f"{lib_name}.{node.func.attr}()"
+
             self.findings.append(
                 ReviewFinding(
                     rule_id="SEC-004",
-                    title="Insecure Pickle Deserialization",
-                    message="Use of pickle deserialization on untrusted data can lead to remote code execution.",
+                    title=f"Insecure {lib_name.capitalize()} Deserialization",
+                    message=f"Use of {action_desc} on untrusted data can lead to arbitrary code execution.",
                     severity=FindingSeverity.ERROR,
                     category=FindingCategory.SECURITY,
                     origin=FindingOrigin.SECURITY_HEURISTIC,
@@ -189,9 +255,10 @@ class _ASTVisitor(ast.NodeVisitor):
                         end_line=node.end_lineno or node.lineno,
                         start_column=node.col_offset,
                         end_column=node.end_col_offset,
+                        symbol_name=action_desc,
                     ),
                     suggestion="Use safe serialization formats like JSON, MessagePack, or Pydantic.",
-                    why_it_matters="Pickle bytecode can construct arbitrary objects and execute arbitrary code on unpickling.",
+                    why_it_matters=f"{lib_name.capitalize()} deserialization can construct arbitrary objects and execute arbitrary code.",
                     tool_name="ast_security",
                     confidence=0.95,
                 )
@@ -296,6 +363,153 @@ class _ASTVisitor(ast.NodeVisitor):
                     confidence=0.9,
                 )
             )
+
+        # SEC-008: Unsafe YAML deserialization
+        if (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr == "load"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "yaml"
+        ):
+            loader_arg = None
+            for kw in node.keywords:
+                if kw.arg == "Loader":
+                    loader_arg = kw.value
+            is_unsafe_yaml = True
+            if (
+                loader_arg
+                and isinstance(loader_arg, ast.Attribute)
+                and loader_arg.attr in ("SafeLoader", "CSafeLoader")
+            ):
+                is_unsafe_yaml = False
+            if is_unsafe_yaml:
+                self.findings.append(
+                    ReviewFinding(
+                        rule_id="SEC-008",
+                        title="Insecure YAML Deserialization",
+                        message="yaml.load() without SafeLoader is vulnerable to arbitrary object instantiation and code execution.",
+                        severity=FindingSeverity.CRITICAL,
+                        category=FindingCategory.SECURITY,
+                        origin=FindingOrigin.SECURITY_HEURISTIC,
+                        location=SourceLocation(
+                            file_path=self.file_path,
+                            start_line=node.lineno,
+                            end_line=node.end_lineno or node.lineno,
+                            symbol_name="yaml.load",
+                        ),
+                        suggestion="Use yaml.safe_load() or specify Loader=yaml.SafeLoader.",
+                        why_it_matters="Default or unrestricted PyYAML loaders can instantiate arbitrary Python objects.",
+                        tool_name="ast_security",
+                        confidence=1.0,
+                    )
+                )
+
+        # SEC-009: Insecure archive extraction (path traversal / Zip Slip)
+        if isinstance(node.func, ast.Attribute) and node.func.attr == "extractall":
+            has_safe_filter = False
+            for kw in node.keywords:
+                if kw.arg == "filter" and isinstance(kw.value, ast.Constant) and kw.value.value in ("data", "tar"):
+                    has_safe_filter = True
+            if not has_safe_filter:
+                self.findings.append(
+                    ReviewFinding(
+                        rule_id="SEC-009",
+                        title="Unsafe Archive Extraction (Path Traversal Risk)",
+                        message="Calling extractall() without explicit safe filtering can overwrite arbitrary files (Zip Slip / Tarbomb).",
+                        severity=FindingSeverity.ERROR,
+                        category=FindingCategory.SECURITY,
+                        origin=FindingOrigin.SECURITY_HEURISTIC,
+                        location=SourceLocation(
+                            file_path=self.file_path,
+                            start_line=node.lineno,
+                            end_line=node.end_lineno or node.lineno,
+                            symbol_name="extractall",
+                        ),
+                        suggestion="For tarfile, use filter='data' (Python 3.12+). For zipfile, validate members before extraction.",
+                        why_it_matters="Archives containing filenames with '../' or absolute paths can escape the extraction directory.",
+                        tool_name="ast_security",
+                        confidence=0.9,
+                    )
+                )
+
+        # SEC-010: Insecure XML entity expansion
+        if isinstance(node.func, ast.Attribute):
+            is_xml_parse = False
+            if (
+                isinstance(node.func.value, ast.Name)
+                and node.func.value.id in ("minidom", "etree", "ElementTree")
+                and node.func.attr in ("parse", "fromstring", "parseString")
+            ) or (
+                isinstance(node.func.value, ast.Attribute)
+                and node.func.value.attr == "ElementTree"
+                and node.func.attr in ("parse", "fromstring")
+            ):
+                is_xml_parse = True
+
+            if is_xml_parse:
+                self.findings.append(
+                    ReviewFinding(
+                        rule_id="SEC-010",
+                        title="Insecure XML Parsing (XXE / Entity Expansion Risk)",
+                        message="Standard library XML parsers are vulnerable to XML entity expansion and external entity injection (XXE).",
+                        severity=FindingSeverity.WARNING,
+                        category=FindingCategory.SECURITY,
+                        origin=FindingOrigin.SECURITY_HEURISTIC,
+                        location=SourceLocation(
+                            file_path=self.file_path,
+                            start_line=node.lineno,
+                            end_line=node.end_lineno or node.lineno,
+                            symbol_name=node.func.attr,
+                        ),
+                        suggestion="Use defusedxml (e.g. defusedxml.ElementTree) for parsing untrusted XML input.",
+                        why_it_matters="Untrusted XML can exploit entity expansion (Billion Laughs) or external DTD retrieval.",
+                        tool_name="ast_security",
+                        confidence=0.9,
+                    )
+                )
+
+        # REL-002: Network request without explicit timeout
+        is_http_request = False
+        http_lib = ""
+        if isinstance(node.func, ast.Attribute):
+            if (
+                isinstance(node.func.value, ast.Name)
+                and node.func.value.id in ("requests", "httpx")
+                and node.func.attr in ("get", "post", "put", "delete", "patch", "head", "request")
+            ):
+                is_http_request = True
+                http_lib = f"{node.func.value.id}.{node.func.attr}"
+            elif (
+                isinstance(node.func.value, ast.Attribute)
+                and node.func.value.attr == "request"
+                and node.func.attr == "urlopen"
+            ):
+                is_http_request = True
+                http_lib = "urllib.request.urlopen"
+
+        if is_http_request:
+            has_timeout = any(kw.arg == "timeout" for kw in node.keywords)
+            if not has_timeout:
+                self.findings.append(
+                    ReviewFinding(
+                        rule_id="REL-002",
+                        title="HTTP Request Missing Timeout",
+                        message=f"Invocation of '{http_lib}()' without explicit timeout risks blocking the thread indefinitely.",
+                        severity=FindingSeverity.WARNING,
+                        category=FindingCategory.RELIABILITY,
+                        origin=FindingOrigin.STATIC_ANALYSIS,
+                        location=SourceLocation(
+                            file_path=self.file_path,
+                            start_line=node.lineno,
+                            end_line=node.end_lineno or node.lineno,
+                            symbol_name=http_lib,
+                        ),
+                        suggestion="Specify an explicit timeout in seconds, e.g., timeout=10.0.",
+                        why_it_matters="Default timeouts in HTTP clients can hang indefinitely on network drops or unresponsive servers.",
+                        tool_name="ast_security",
+                        confidence=0.95,
+                    )
+                )
 
         self.generic_visit(node)
 
@@ -408,6 +622,7 @@ class ASTSecurityAdapter(StaticAnalysisAdapter):
                             start_line=line_idx,
                             end_line=line_idx,
                         ),
+                        technical_evidence=redact_secrets_in_text(line).strip(),
                         suggestion="Store credentials in environment variables or an external secret manager.",
                         tool_name=self.name,
                         confidence=0.85,

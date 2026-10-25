@@ -10,6 +10,11 @@ from packages.review.domain.models import FindingSeverity, ReviewReport
 from packages.review.engine import LocalReviewEngine, ReviewConfig
 from packages.review.validator import FindingValidator
 
+try:
+    from logicfalcon import __version__
+except ImportError:
+    __version__ = "0.1.3"
+
 SEVERITY_WEIGHTS: dict[FindingSeverity, int] = {
     FindingSeverity.INFO: 0,
     FindingSeverity.WARNING: 1,
@@ -95,6 +100,32 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=10.0,
         help="Per-file analysis timeout in seconds (default: 10.0).",
+    )
+    parser.add_argument(
+        "--file",
+        type=str,
+        default=None,
+        help="Analyze a single target file directly instead of a git diff.",
+    )
+    parser.add_argument(
+        "--stdin",
+        action="store_true",
+        help="Read target file content directly from standard input (useful for unsaved editor buffers).",
+    )
+    parser.add_argument(
+        "--workspace",
+        action="store_true",
+        help="Analyze all supported project files across the workspace.",
+    )
+    parser.add_argument(
+        "--with-re-context",
+        action="store_true",
+        help="Enrich findings with Reverse Engineering Intelligence (components, reachability, blast radius).",
+    )
+    parser.add_argument(
+        "--with-impact",
+        action="store_true",
+        help="Enrich review with Change Impact Analysis & Predictive Test Selection.",
     )
     return parser
 
@@ -250,6 +281,10 @@ def format_sarif_report(report: ReviewReport) -> str:
                 "tool_name": f.tool_name,
             },
         }
+        if "dependency_path" in f.metadata:
+            res_obj["properties"]["dependency_path"] = f.metadata["dependency_path"]
+        if "rule_type" in f.metadata:
+            res_obj["properties"]["rule_type"] = f.metadata["rule_type"]
         if f.proposed_fix and f.proposed_fix.replacement_code:
             res_obj["fixes"] = [
                 {
@@ -281,7 +316,7 @@ def format_sarif_report(report: ReviewReport) -> str:
                     "driver": {
                         "name": "LogicFalcon",
                         "fullName": "LogicFalcon Code Review Engine (Powered by AEGIS AI)",
-                        "version": "0.1.1",
+                        "version": __version__,
                         "rules": list(rules_map.values()),
                     }
                 },
@@ -327,30 +362,65 @@ def run_cli(args: list[str] | None = None) -> int:
         return 2
 
     # Load configuration from file or defaults
-    config = ReviewConfig.load_config(config_path=parsed.config, repo_root=repo_path)
+    try:
+        config = ReviewConfig.load_config(
+            config_path=parsed.config,
+            repo_root=repo_path,
+            raise_on_error=bool(parsed.config),
+        )
+    except Exception as e:
+        sys.stderr.write(f"Configuration error: {e}\n")
+        return 2
+
     if parsed.timeout:
         config.per_file_timeout_seconds = parsed.timeout
     if parsed.enable_tools:
         config.enable_external_tools = True
     if parsed.enable_ai:
         config.enable_ai_review = True
+    if getattr(parsed, "with_re_context", False):
+        config.include_re_context = True
+    if getattr(parsed, "with_impact", False):
+        config.include_impact_analysis = True
 
     engine = LocalReviewEngine(repo_root=repo_path, config=config)
 
     try:
-        report = engine.review_local_git_diff(
-            base_ref=parsed.base,
-            staged=parsed.staged,
-            unstaged=parsed.unstaged,
-        )
+        if parsed.file:
+            stdin_content: str | None = None
+            if parsed.stdin:
+                stdin_content = sys.stdin.read()
+            report = engine.review_file(parsed.file, content=stdin_content)
+        elif parsed.workspace:
+            discovered_files: list[str] = []
+            max_workspace_files = 1000
+            for ext in (".py", ".ts", ".js", ".tsx", ".jsx"):
+                for p in repo_path.rglob(f"*{ext}"):
+                    if p.is_file():
+                        try:
+                            rel = str(p.relative_to(repo_path))
+                            if not engine._is_ignored(rel):
+                                discovered_files.append(rel)
+                                if len(discovered_files) >= max_workspace_files:
+                                    break
+                        except ValueError:
+                            continue
+                if len(discovered_files) >= max_workspace_files:
+                    break
+            report = engine.review_files(discovered_files)
+        else:
+            report = engine.review_local_git_diff(
+                base_ref=parsed.base,
+                staged=parsed.staged,
+                unstaged=parsed.unstaged,
+            )
+            # Validate findings and suppress hallucinations/invalid locations for diff reviews
+            validator = FindingValidator(repo_root=repo_path)
+            verified_findings, _ = validator.validate(report.findings)
+            report.findings = verified_findings
     except Exception as e:
         sys.stderr.write(f"Review execution failure: {e}\n")
         return 2
-
-    # Validate findings and suppress hallucinations/invalid locations
-    validator = FindingValidator(repo_root=repo_path)
-    verified_findings, _ = validator.validate(report.findings)
-    report.findings = verified_findings
 
     # Optional baseline debt suppression
     if parsed.baseline:
