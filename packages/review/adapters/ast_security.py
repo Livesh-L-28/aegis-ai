@@ -15,7 +15,7 @@ from packages.review.domain.models import (
 )
 
 CREDENTIAL_PATTERN = re.compile(
-    r"(?i)(?:password|secret|token|api_key|private_key)\s*[:=]\s*['\"]([a-zA-Z0-9_\-\.=/+]{8,})['\"]"
+    r"(?i)['\"]?(?:password|secret|token|api_key|api_token|private_key)['\"]?\s*[:=]\s*['\"]([a-zA-Z0-9_\-\.=/+]{8,})['\"]"
 )
 URI_CREDENTIAL_PATTERN = re.compile(
     r"([a-zA-Z0-9_+]+://[^:\s]+:)([^@\s]+)(@[^\s\"'\`]+)"

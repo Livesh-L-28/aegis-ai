@@ -13,7 +13,7 @@ from packages.review.validator import FindingValidator
 try:
     from logicfalcon import __version__
 except ImportError:
-    __version__ = "0.1.3"
+    __version__ = "0.1.4"
 
 SEVERITY_WEIGHTS: dict[FindingSeverity, int] = {
     FindingSeverity.INFO: 0,

@@ -21,6 +21,15 @@ except (ImportError, ModuleNotFoundError):
             )
 
 from logicfalcon.sdk import (
+    DeploymentInventory,
+    FdeMission,
+    FdeStep,
+    MissionOrchestrator,
+    MissionStatus,
+    OperationCategory,
+    PolicyGateway,
+    PreflightReport,
+    Runbook,
     analyze_architecture,
     analyze_impact,
     analyze_impact_with_review,
@@ -31,6 +40,11 @@ from logicfalcon.sdk import (
     compare_snapshots,
     estimate_debt,
     evaluate_history_policy,
+    fde_generate_runbook,
+    fde_inspect,
+    fde_plan,
+    fde_preflight,
+    fde_run_mission,
     list_snapshots,
     reverse_engineer,
     reverse_engineer_with_review,
@@ -111,7 +125,7 @@ from packages.review.unified.recommendations import RecommendationSynthesizer
 from packages.review.unified.report_generator import UnifiedReportGenerator
 from packages.review.validator import FindingValidator
 
-__version__ = "0.1.3"
+__version__ = "0.1.4"
 __product__ = "LogicFalcon"
 __tagline__ = "Fast, precise engineering intelligence."
 __platform__ = "AEGIS AI"
@@ -129,8 +143,11 @@ __all__ = [
     "ChangeSet",
     "CycleGroup",
     "DependencyCycle",
+    "DeploymentInventory",
     "EngineeringPolicyEvaluator",
     "EngineeringTrendReport",
+    "FdeMission",
+    "FdeStep",
     "FindingCategory",
     "FindingLifecycleState",
     "FindingSeverity",
@@ -144,10 +161,16 @@ __all__ = [
     "ImpactedEntity",
     "LayerDefinition",
     "LocalReviewEngine",
+    "MissionOrchestrator",
+    "MissionStatus",
     "ModuleMetric",
+    "OperationCategory",
+    "PolicyAuditRecord",
     "PolicyEvaluationResult",
+    "PolicyGateway",
     "PolicyMode",
     "PolicyRule",
+    "PreflightReport",
     "ProposedFix",
     "RecommendationCategory",
     "RecommendationPriority",
@@ -162,6 +185,7 @@ __all__ = [
     "ReviewFixEngine",
     "ReviewReport",
     "RuleException",
+    "Runbook",
     "SnapshotComparison",
     "SnapshotFinding",
     "SnapshotMetadata",
@@ -190,6 +214,11 @@ __all__ = [
     "compare_snapshots",
     "estimate_debt",
     "evaluate_history_policy",
+    "fde_generate_runbook",
+    "fde_inspect",
+    "fde_plan",
+    "fde_preflight",
+    "fde_run_mission",
     "global_analyzer_registry",
     "list_snapshots",
     "reverse_engineer",

@@ -28,6 +28,52 @@ from packages.review.domain.models import (
     RuleException,
 )
 from packages.review.engine import LocalReviewEngine, ReviewConfig
+from packages.review.fde import (
+    AdapterCapability,
+    AdapterExecutionResult,
+    AdapterHealth,
+    AdapterHealthStatus,
+    AdapterRegistry,
+    AwsAdapter,
+    BaseAdapter,
+    DeploymentDiscoveryEngine,
+    DeploymentInventory,
+    DeploymentRequirement,
+    DiagnosticHypothesis,
+    DockerAdapter,
+    FailureDiagnoser,
+    FdeCheckpointStore,
+    FdeEvidence,
+    FdeMission,
+    FdeStep,
+    HttpAdapter,
+    InvalidStateTransitionError,
+    McpAdapter,
+    MissionExecutionReport,
+    MissionOrchestrator,
+    MissionStatus,
+    OperationCategory,
+    PolicyAuditRecord,
+    PolicyGateway,
+    PolicyViolationError,
+    PostconditionResult,
+    PostconditionVerifier,
+    PostgresAdapter,
+    PreflightFinding,
+    PreflightReport,
+    PreflightRunner,
+    PreflightSeverity,
+    PreflightStatus,
+    Runbook,
+    RunbookGenerator,
+    RunbookInstruction,
+    StepDependency,
+    StepExecutionSummary,
+    StepRiskLevel,
+    StepStateMachine,
+    StepStatus,
+    VerificationOutcome,
+)
 from packages.review.fix_engine import (
     FixApplicationResult,
     RemediationVerificationResult,
@@ -75,9 +121,16 @@ from packages.review.unified.report_generator import UnifiedReportGenerator
 from packages.review.validator import FindingValidator
 
 __all__ = [
+    "AdapterCapability",
+    "AdapterExecutionResult",
+    "AdapterHealth",
+    "AdapterHealthStatus",
+    "AdapterRegistry",
     "AnalyzerRegistry",
     "ArchitecturePolicy",
     "ArchitectureReport",
+    "AwsAdapter",
+    "BaseAdapter",
     "BoundaryRule",
     "BoundaryViolation",
     "ChangeImpactEngine",
@@ -85,8 +138,18 @@ __all__ = [
     "ChangeSet",
     "CycleGroup",
     "DependencyCycle",
+    "DeploymentDiscoveryEngine",
+    "DeploymentInventory",
+    "DeploymentRequirement",
+    "DiagnosticHypothesis",
+    "DockerAdapter",
     "EngineeringPolicyEvaluator",
     "EngineeringTrendReport",
+    "FailureDiagnoser",
+    "FdeCheckpointStore",
+    "FdeEvidence",
+    "FdeMission",
+    "FdeStep",
     "FindingLifecycleState",
     "FindingSeverity",
     "FindingValidator",
@@ -94,15 +157,33 @@ __all__ = [
     "HistoricalIntelligenceEngine",
     "HistoryReportGenerator",
     "HistoryStorage",
+    "HttpAdapter",
     "ImpactRiskLevel",
     "ImpactType",
     "ImpactedEntity",
+    "InvalidStateTransitionError",
     "LayerDefinition",
     "LocalReviewEngine",
+    "McpAdapter",
+    "MissionExecutionReport",
+    "MissionOrchestrator",
+    "MissionStatus",
     "ModuleMetric",
+    "OperationCategory",
+    "PolicyAuditRecord",
     "PolicyEvaluationResult",
+    "PolicyGateway",
     "PolicyMode",
     "PolicyRule",
+    "PolicyViolationError",
+    "PostconditionResult",
+    "PostconditionVerifier",
+    "PostgresAdapter",
+    "PreflightFinding",
+    "PreflightReport",
+    "PreflightRunner",
+    "PreflightSeverity",
+    "PreflightStatus",
     "ProposedFix",
     "RecommendationCategory",
     "RecommendationPriority",
@@ -117,11 +198,19 @@ __all__ = [
     "ReviewFixEngine",
     "ReviewReport",
     "RuleException",
+    "Runbook",
+    "RunbookGenerator",
+    "RunbookInstruction",
     "SnapshotComparison",
     "SnapshotFinding",
     "SnapshotMetadata",
     "SnapshotSummary",
     "StaticAnalysisAdapter",
+    "StepDependency",
+    "StepExecutionSummary",
+    "StepRiskLevel",
+    "StepStateMachine",
+    "StepStatus",
     "TechnicalDebtEstimate",
     "TestImpactCandidate",
     "TrendDirection",
@@ -129,6 +218,7 @@ __all__ = [
     "UnifiedIntelligenceReport",
     "UnifiedRecommendation",
     "UnifiedReportGenerator",
+    "VerificationOutcome",
     "analyze_architecture",
     "analyze_impact",
     "analyze_impact_with_review",
@@ -139,6 +229,11 @@ __all__ = [
     "compare_snapshots",
     "estimate_debt",
     "evaluate_history_policy",
+    "fde_generate_runbook",
+    "fde_inspect",
+    "fde_plan",
+    "fde_preflight",
+    "fde_run_mission",
     "global_analyzer_registry",
     "list_snapshots",
     "reverse_engineer",
@@ -719,5 +814,116 @@ def analyze_unified(
     return report
 
 
+def fde_inspect(
+    repo_root: str | Path = ".",
+) -> DeploymentInventory:
+    """Discover deployment requirements, frameworks, databases, and container specs statically."""
+    engine = DeploymentDiscoveryEngine(repo_root=Path(repo_root))
+    return engine.discover()
 
 
+def fde_preflight(
+    repo_root: str | Path = ".",
+    check_docker: bool = False,
+    check_ports: bool = True,
+    check_env_vars: bool = True,
+    check_dns: bool = False,
+    dns_hosts: list[str] | None = None,
+    http_health_url: str | None = None,
+) -> PreflightReport:
+    """Run non-destructive preflight validation probes for runtime, ports, DNS, and endpoints."""
+    runner = PreflightRunner(
+        repo_root=Path(repo_root),
+        check_docker=check_docker,
+        check_ports=check_ports,
+        check_env_vars=check_env_vars,
+        check_dns=check_dns,
+        dns_hosts=dns_hosts,
+        http_health_url=http_health_url,
+    )
+    return runner.run_preflight()
+
+
+def fde_plan(
+    repo_root: str | Path = ".",
+) -> FdeMission:
+    """Generate a deployment mission DAG based on static inspection of the repository."""
+    inventory = fde_inspect(repo_root=repo_root)
+    steps = [
+        FdeStep(
+            id="validate-runtime",
+            name="Validate Runtime Environment",
+            description="Verify Python runtime environment meets minimum version requirements.",
+            operation_category=OperationCategory.READ_ONLY,
+            risk_level=StepRiskLevel.LOW,
+            operation="probe_runtime",
+            target="python",
+        ),
+    ]
+
+    if inventory.database_types:
+        for db in inventory.database_types:
+            steps.append(
+                FdeStep(
+                    id=f"verify-db-{db.lower()}",
+                    name=f"Verify {db} Database Reachability",
+                    description=f"Perform read-only validation check on configured {db} instance.",
+                    operation_category=OperationCategory.READ_ONLY,
+                    risk_level=StepRiskLevel.LOW,
+                    operation="postgres_ping" if db.lower() == "postgresql" else "db_ping",
+                    target=db.lower(),
+                    dependencies=[StepDependency(step_id="validate-runtime")],
+                )
+            )
+
+    if inventory.declared_ports:
+        for port in inventory.declared_ports:
+            steps.append(
+                FdeStep(
+                    id=f"check-port-{port}",
+                    name=f"Check Port {port} Availability",
+                    description=f"Ensure application port {port} is not already bound by another process.",
+                    operation_category=OperationCategory.READ_ONLY,
+                    risk_level=StepRiskLevel.LOW,
+                    operation="probe_port",
+                    target=str(port),
+                    dependencies=[StepDependency(step_id="validate-runtime")],
+                )
+            )
+
+    return FdeMission(
+        name="Automated FDE Deployment Plan",
+        objective="Validate repository deployment readiness and verify runtime prerequisites.",
+        steps=steps,
+    )
+
+
+def fde_generate_runbook(
+    mission: FdeMission,
+    inventory: DeploymentInventory | None = None,
+    execution_report: MissionExecutionReport | None = None,
+) -> Runbook:
+    """Generate an operator deployment and verification runbook from an FDE mission."""
+    generator = RunbookGenerator()
+    return generator.generate_runbook(
+        mission=mission,
+        inventory=inventory,
+        execution_report=execution_report,
+    )
+
+
+def fde_run_mission(
+    mission: FdeMission,
+    registry: AdapterRegistry | None = None,
+    approval_tokens: dict[str, str] | None = None,
+) -> MissionExecutionReport:
+    """Execute an authorized FDE mission DAG through the policy gateway with postcondition verification."""
+    from packages.review.fde.cli import _build_default_registry
+
+    reg = registry or _build_default_registry()
+    gateway = PolicyGateway(reg)
+    orchestrator = MissionOrchestrator(
+        registry=reg,
+        policy_gateway=gateway,
+    )
+    return orchestrator.run_mission(mission, approval_tokens=approval_tokens or {})

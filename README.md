@@ -46,6 +46,14 @@ logicfalcon history debt --repo .
 logicfalcon history policy --repo . --config .logicfalcon-policy.json
 logicfalcon history prune --keep-last 20
 
+# Forward Deployment Engineering (FDE) — discovery, preflight, planning, runbooks, and controlled execution
+logicfalcon fde inspect --repo .
+logicfalcon fde preflight --repo .
+logicfalcon fde plan --repo . --operation deploy --output plan.json
+logicfalcon fde runbook --mission-file plan.json --output-format markdown
+logicfalcon fde run --mission-file plan.json --dry-run
+logicfalcon fde run --mission-file plan.json --approved --approval-token <TOKEN>
+
 # Launch stdio Model Context Protocol (MCP) server for AI coding agents
 logicfalcon mcp
 ```
@@ -103,6 +111,21 @@ snap = capture_snapshot(repo_root=Path("."), persist=True)
 print(f"Captured snapshot {snap.id} (Health: {snap.metrics.health_score}/100, Debt: {snap.metrics.technical_debt_score} pts)")
 trends = analyze_trends(repo_root=Path("."))
 print(f"Repository Health Trend: {trends.health_direction} | Debt Trend: {trends.debt_direction}")
+
+# 6. Forward Deployment Engineering (FDE)
+from logicfalcon import fde_inspect, fde_preflight, fde_plan, fde_generate_runbook, fde_run_mission
+
+inventory = fde_inspect(repo_root=Path("."))
+print(f"Frameworks: {inventory.frameworks}, Ports: {inventory.declared_ports}, DBs: {inventory.database_types}")
+
+preflight_report = fde_preflight(repo_root=Path("."))
+print(f"Preflight status: {preflight_report.status} ({len(preflight_report.findings)} findings)")
+
+mission = fde_plan(repo_root=Path("."))
+print(f"Planned mission {mission.id} with {len(mission.steps)} steps.")
+
+runbook = fde_generate_runbook(mission=mission, inventory=inventory)
+print(f"Generated runbook with {len(runbook.ordered_instructions)} instructions.")
 ```
 
 
@@ -125,6 +148,27 @@ LogicFalcon operates completely offline and deterministically without hallucinat
 | `DEP-001` | Security | Known Dependency Advisory | Pinned Python (`requirements.txt`, `pyproject.toml`) and JS/TS (`package.json`) matching local CVE database |
 | `ARCH-001` | Architecture | Circular Dependency | Direct or indirect import cycles detected via DFS / Tarjan SCC |
 | `ARCH-002` | Architecture | Layer Boundary Violation | Illegal cross-tier imports violating architecture boundaries |
+
+---
+
+## Forward Deployment Engineering (FDE)
+
+LogicFalcon v0.1.4 introduces **Forward Deployment Engineering (FDE)** — a modular, secure, deterministic subsystem designed to bridge the gap between static repository intelligence and production operational deployment readiness.
+
+### Key Capabilities
+- **Deployment & Service Discovery**: Deterministic scanning of repositories to catalog framework services, exposed ports, database dependencies, and container definitions without running code.
+- **Preflight Probes**: Bounded, non-destructive environmental health checks verifying port availability, runtime versions, DNS resolution, and required environment configurations.
+- **Safe Adapters & Registry**: Standardized, least-privilege interfaces for System (non-shell subprocess execution), HTTP (SSRF-protected, cloud metadata IP blocking, TLS verification), Docker, PostgreSQL, MCP, and AWS.
+- **Policy Gateway & Approval Security**: Strict state-machine orchestration with cryptographic parameter-bound SHA-256 approval tokens preventing privilege escalation or token reuse.
+- **Postcondition Verification**: Declarative verification validating HTTP response codes, JSON body values, and port bindings with deterministic pass/fail results.
+- **Failure Diagnosis & Atomic Checkpointing**: Ranked root-cause hypotheses for mission step failures and atomic snapshotting (`0o600` permissions) with recursive credential redaction.
+- **Handover Runbooks**: Automated Markdown and machine-readable JSON operational handover runbooks with sanitized commands.
+
+For comprehensive technical documentation, refer to:
+- [FDE Overview & Getting Started](docs/fde/README.md)
+- [FDE Architecture & Security Model](docs/fde/architecture.md)
+- [FDE CLI Reference](docs/fde/cli-reference.md)
+- [FDE SDK Reference](docs/fde/sdk-reference.md)
 
 ---
 

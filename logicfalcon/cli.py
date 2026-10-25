@@ -266,6 +266,13 @@ def build_root_parser() -> argparse.ArgumentParser:
     uni_parser.add_argument("--output-file", type=str, default=None, help="Write output report directly to file.")
     uni_parser.add_argument("--fail-on-policy", action="store_true", help="Exit code 1 if engineering policy gate fails.")
 
+    # Subcommand: fde
+    subparsers.add_parser(
+        "fde",
+        help="Forward Deployment Engineering (FDE) discovery, preflight, missions, and runbooks.",
+        add_help=False,
+    )
+
     return parser
 
 
@@ -828,6 +835,11 @@ def run_main(args: list[str] | None = None) -> int:
     if argv[0] == "review":
         return run_review_cli(argv[1:])
 
+    if argv[0] == "fde":
+        from packages.review.fde.cli import run_fde_cli
+
+        return run_fde_cli(argv[1:])
+
     # Fallback to standard argparsing
     parser = build_root_parser()
     parsed = parser.parse_args(argv)
@@ -853,6 +865,10 @@ def run_main(args: list[str] | None = None) -> int:
         return 0
     elif parsed.subcommand == "review":
         return run_review_cli(argv[1:])
+    elif parsed.subcommand == "fde":
+        from packages.review.fde.cli import run_fde_cli
+
+        return run_fde_cli(argv[1:])
 
     parser.print_help()
     return 0

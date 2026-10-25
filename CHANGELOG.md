@@ -2,6 +2,56 @@
 
 All notable changes to the LogicFalcon developer platform (powered by AEGIS AI) are documented in this file.
 
+## [0.1.4] — 2026-10-25: Forward Deployment Engineering (FDE)
+
+Modular, secure, and deterministic Forward Deployment Engineering (FDE) subsystem enabling automated deployment discovery, preflight health probing, safe adapter execution, cryptographic approval policy enforcement, declarative postcondition verification, root-cause failure diagnosis, and sanitized operational handover runbooks.
+
+### Added
+- **Repository & Deployment Discovery (`packages/review/fde/discovery.py`)**:
+  - Deterministic repository analysis cataloging services (FastAPI, Flask, Django, Express, Next.js), exposed port allocations, database dependencies (PostgreSQL, MySQL, Redis, MongoDB), and Docker compose topology.
+- **Preflight Probes (`packages/review/fde/preflight.py`)**:
+  - Non-destructive environmental health checks probing port availability, Python/Node runtime versions, local/remote DNS resolution, and critical environment configuration variables.
+- **Safe Adapters & Central Registry (`packages/review/fde/adapters/`)**:
+  - Standardized, least-privilege adapters for System (`SystemAdapter` using non-shell `subprocess` execution and process group timeout isolation), HTTP (`HttpAdapter` with strict SSRF defense, cloud metadata IP blocking `169.254.169.254`, and payload size limits), Docker (`DockerAdapter`), PostgreSQL (`PostgresAdapter` with read-only query safety and SQL injection defense), MCP (`McpAdapter`), and AWS (`AwsAdapter`).
+  - Extensible `AdapterRegistry` with health checking and operation category routing.
+- **Policy Gateway & Cryptographic Approvals (`packages/review/fde/orchestration/policy_gateway.py`)**:
+  - Strict policy gateway enforcing capability authorization (`READ_ONLY`, `CONTAINED_WRITE`, `EXTERNAL_MUTATING`, `DANGEROUS`).
+  - Cryptographic parameter-bound SHA-256 approval tokens preventing privilege escalation, argument tampering, or cross-mission token reuse.
+- **Mission Orchestrator & DAG Execution Engine (`packages/review/fde/orchestration/orchestrator.py`)**:
+  - Directed Acyclic Graph (DAG) mission planner with cycle detection, topological dependency ordering, and cascading failure containment.
+  - Strict state-machine transitions (`PENDING`, `PREFLIGHT`, `APPROVED`, `EXECUTING`, `COMPLETED`, `FAILED`, `CANCELLED`).
+  - Safe dry-run simulation mode computing execution plans without applying side effects.
+- **Postcondition Verification (`packages/review/fde/verification/postconditions.py`)**:
+  - Deterministic post-execution assertions validating HTTP status codes, structured JSON body values, and TCP port bindings.
+- **Root-Cause Failure Diagnosis (`packages/review/fde/verification/diagnostics.py`)**:
+  - Automated correlation of failed step outputs and postcondition assertions into ranked diagnostic hypotheses with confidence scores and actionable remediations.
+- **Atomic Checkpoint Store (`packages/review/fde/verification/checkpoint_store.py`)**:
+  - Atomic write mechanism via temporary files, strict `0o600` file permissions, and recursive secret/credential redaction in persisted mission states.
+- **Operational Runbook Generation (`packages/review/fde/verification/runbook_generator.py`)**:
+  - Automated generation of Markdown and machine-readable JSON operational handover runbooks with sanitized commands and parameter documentation.
+- **Unified CLI & Python SDK Integration**:
+  - CLI subcommand `logicfalcon fde` with `inspect`, `preflight`, `plan`, `runbook`, and `run`.
+  - Python SDK exports: `fde_inspect`, `fde_preflight`, `fde_plan`, `fde_generate_runbook`, `fde_run_mission`, `FdeMission`, `FdeStep`, `MissionOrchestrator`, `PolicyGateway`, `OperationCategory`, `DeploymentInventory`.
+
+### Fixed & Hardened
+- Credential redaction regex pattern in `packages/review/adapters/ast_security.py` enhanced to match quoted JSON key/value pairs (`"api_token": "..."`).
+- HTTP adapter response bounds: strictly truncates and safely flags responses exceeding 512 KB with `RESPONSE_TOO_LARGE`.
+- Non-shell subprocess execution preventing command injection across all system adapter calls.
+
+---
+
+## [0.1.3] — 2026-10-25: Unified Engineering Intelligence
+
+Consolidation of repository reverse engineering, change impact analysis, and continuous historical health tracking into the core LogicFalcon developer workflow.
+
+### Highlights & Capabilities
+- **Unified Engineering Intelligence**:
+  - Two-way integration between AST code review and architecture reverse engineering.
+  - Change impact analysis with predictive test selection across working tree and Git revisions.
+  - SQLite-backed historical repository health tracking, technical debt scoring, and regression policy gates.
+
+---
+
 ## [0.1.2] — 2026-10-19: Multi-IDE Platform & Seven-Pillar Engineering Intelligence
 
 Full multi-IDE integration layer supporting Visual Studio Code, Cursor, and Google Antigravity, combined with the comprehensive Seven-Pillar Engineering Upgrade.
